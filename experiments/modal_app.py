@@ -77,29 +77,45 @@ def _inject_layer(n_layers: int, frac: float = INJECT_FRAC) -> int:
     return max(1, min(n_layers - 1, round(frac * n_layers)))
 
 
-def _gguf_path(model_id: str) -> str:
+def _gguf_path(model_id: str, concept: str = "formality") -> str:
     slug = model_id.split("/")[-1].replace(".", "_")
-    return f"{VOL}/formality_{slug}.gguf"
+    stem = "formality" if concept == "formality" else concept  # keep legacy names
+    return f"{VOL}/{stem}_{slug}.gguf"
 
 # ---------------------------------------------------------------------------
-# Dataset: formal vs casual contrastive pairs (repeng persona-suffix pattern).
+# Concepts: contrastive persona pairs (repeng persona-suffix pattern).
+# The pair differs ONLY in the persona -> the PCA diff isolates the concept.
 # ---------------------------------------------------------------------------
 
-# Qwen2.5 chat scaffold. repeng reads the hidden state at the last token, so we
-# end each string mid-assistant-turn with a shared truncated suffix; the pair
-# differs ONLY in the persona instruction -> the PCA diff isolates formality.
+# Qwen2.5 chat scaffold (fallback only; instruct models use apply_chat_template).
 _QWEN_TMPL = "<|im_start|>user\n{msg}<|im_end|>\n<|im_start|>assistant\n{suffix}"
 
-_POS_PERSONAS = [
-    "an extremely formal, professional person",
-    "a highly eloquent scholar writing for publication",
-    "a polished diplomat drafting official correspondence",
-]
-_NEG_PERSONAS = [
-    "an extremely casual, laid-back person",
-    "a slangy teenager texting a friend",
-    "a chatty buddy shooting the breeze",
-]
+CONCEPTS = {
+    "formality": {
+        "pos": [
+            "an extremely formal, professional person",
+            "a highly eloquent scholar writing for publication",
+            "a polished diplomat drafting official correspondence",
+        ],
+        "neg": [
+            "an extremely casual, laid-back person",
+            "a slangy teenager texting a friend",
+            "a chatty buddy shooting the breeze",
+        ],
+    },
+    "sentiment": {
+        "pos": [
+            "an extremely positive, upbeat, cheerful person",
+            "a joyful optimist who loves everything",
+            "an enthusiastic person delighted with the world",
+        ],
+        "neg": [
+            "an extremely negative, gloomy, miserable person",
+            "a bitter pessimist who hates everything",
+            "a resentful person disgusted with the world",
+        ],
+    },
+}
 
 # Neutral seed text; we truncate it at many points to get many suffixes.
 _SEED_TEXT = (
@@ -111,17 +127,18 @@ _SEED_TEXT = (
 )
 
 
-def build_dataset(tok=None):
-    """Formal/casual contrastive pairs.
+def build_dataset(tok=None, concept: str = "formality"):
+    """Contrastive persona pairs for `concept`.
 
     If `tok` has a chat template (instruct models) each side is wrapped in THAT
     model's own chat scaffold via apply_chat_template — correct for Qwen, Llama,
-    Gemma alike (not a hardcoded Qwen scaffold). Base models (no template) get
+    Mistral alike (not a hardcoded Qwen scaffold). Base models (no template) get
     plain completion text. repeng reads the last-token hidden state, so we append
     a shared truncated suffix; the pair differs ONLY in the persona instruction.
     """
     from repeng import DatasetEntry
 
+    personas = CONCEPTS[concept]
     words = _SEED_TEXT.split()
     suffixes = [" ".join(words[:i]) for i in range(1, min(len(words), 24))]
     persona_msg = "Act as if you are {persona}. Write a short message."
@@ -137,7 +154,7 @@ def build_dataset(tok=None):
 
     dataset: list[DatasetEntry] = []
     for suffix in suffixes:
-        for pos, neg in zip(_POS_PERSONAS, _NEG_PERSONAS):
+        for pos, neg in zip(personas["pos"], personas["neg"]):
             dataset.append(
                 DatasetEntry(
                     positive=scaffold(pos) + suffix,
@@ -183,6 +200,37 @@ def formality_score(text: str) -> float:
         - 20.0 * casual / n
         - 8.0 * contractions / n
     )
+
+
+# Sentiment lexicon (cheap proxy; not a calibrated classifier).
+_POSITIVE = {
+    "happy", "joy", "joyful", "wonderful", "great", "love", "loved", "loving",
+    "amazing", "excellent", "fantastic", "delighted", "cheerful", "glad",
+    "beautiful", "brilliant", "perfect", "best", "hopeful", "grateful",
+    "excited", "enjoy", "enjoyed", "pleasure", "pleased", "smile", "bright",
+    "positive", "optimistic", "thrilled", "fabulous", "lovely", "good", "nice",
+}
+_NEGATIVE = {
+    "sad", "unhappy", "terrible", "awful", "hate", "hated", "horrible",
+    "miserable", "gloomy", "depressed", "angry", "bitter", "disgusting",
+    "worst", "bad", "pain", "painful", "cruel", "hopeless", "dreadful",
+    "grim", "tragic", "suffering", "despair", "ugly", "annoying", "worthless",
+    "negative", "pessimistic", "furious", "resentful", "disappointing", "fear",
+}
+
+
+def sentiment_score(text: str) -> float:
+    """Cheap lexical sentiment proxy. Higher = more positive. Not calibrated."""
+    import re
+
+    words = re.findall(r"[A-Za-z']+", text.lower())
+    n = max(len(words), 1)
+    pos = sum(w in _POSITIVE for w in words)
+    neg = sum(w in _NEGATIVE for w in words)
+    return 100.0 * (pos - neg) / n
+
+
+SCORERS = {"formality": formality_score, "sentiment": sentiment_score}
 
 
 def repetition_rate(text: str) -> float:
@@ -299,7 +347,11 @@ def introspect() -> str:
 
 
 @app.function(gpu=GPU, timeout=3600, volumes={VOL: vol}, secrets=[HF_SECRET])
-def train_and_export(model_id: str = MODEL_ID, gguf_path: str | None = None) -> dict:
+def train_and_export(
+    model_id: str = MODEL_ID,
+    gguf_path: str | None = None,
+    concept: str = "formality",
+) -> dict:
     import numpy as np
     from repeng import ControlVector
 
@@ -312,8 +364,9 @@ def train_and_export(model_id: str = MODEL_ID, gguf_path: str | None = None) -> 
     wrapped = ControlModel(model, list(range(-1, -n_layers, -1)))
 
     chat = bool(getattr(tok, "chat_template", None))
-    dataset = build_dataset(tok)
-    print(f"model {model_id}  chat={chat}  pairs {len(dataset)}  n_layers {n_layers}")
+    dataset = build_dataset(tok, concept=concept)
+    print(f"model {model_id}  concept {concept}  chat={chat}  "
+          f"pairs {len(dataset)}  n_layers {n_layers}")
 
     vec = ControlVector.train(wrapped, tok, dataset, batch_size=16)
 
@@ -390,6 +443,7 @@ def dose_response(
     alphas: list[float] | None = None,
     model_id: str = MODEL_ID,
     gguf_path: str | None = None,
+    concept: str = "formality",
 ) -> dict:
     """Dose-response at a fixed layer. Provide EITHER absolute `coeffs` OR
     `alphas` (dimensionless dose); alphas convert to per-model coeffs via the
@@ -404,6 +458,7 @@ def dose_response(
 
     import numpy as np
 
+    scorer = SCORERS[concept]
     vec = load_vector(gguf_path or GGUF_PATH)
     dnorm = float(np.linalg.norm(vec.directions[layer]))
 
@@ -428,7 +483,7 @@ def dose_response(
                 cmodel.reset()
                 cmodel.set_control(vec, coeff)
                 txt = _generate(cmodel, tok, ids, seed=seed)
-                forms.append(formality_score(txt))
+                forms.append(scorer(txt))
                 reps.append(repetition_rate(txt))
                 ppls.append(_ppl_unsteered(cmodel, tok, txt))  # resets inside
             rows.append(
@@ -436,7 +491,7 @@ def dose_response(
                     "coeff": coeff,
                     "seed": seed,
                     "alpha_norm": coeff * dnorm / resid_norm,
-                    "formality": float(np.mean(forms)),
+                    "effect": float(np.mean(forms)),
                     "repetition": float(np.mean(reps)),
                     "ppl": float(np.nanmean(ppls)),
                 }
@@ -445,6 +500,7 @@ def dose_response(
     wall = time.time() - t0
     return {
         "layer": layer,
+        "concept": concept,
         "dir_norm": dnorm,
         "resid_norm": resid_norm,
         "rows": rows,
@@ -484,6 +540,7 @@ def layer_sweep(
     target_alpha: float | None = None,
     model_id: str = MODEL_ID,
     gguf_path: str | None = None,
+    concept: str = "formality",
 ) -> dict:
     """Inject each layer's OWN direction at that layer.
 
@@ -503,6 +560,7 @@ def layer_sweep(
 
     import numpy as np
 
+    scorer = SCORERS[concept]
     vec = load_vector(gguf_path or GGUF_PATH)
     model, tok = _load_model_and_tokenizer(model_id)
     from repeng import ControlModel
@@ -510,13 +568,13 @@ def layer_sweep(
     n_layers = model.config.num_hidden_layers
     prompt_ids = [_prompt_ids(tok, p) for p in _EVAL_PROMPTS]
 
-    # baseline (coeff 0) reference for formality delta
+    # baseline (coeff 0) reference for the effect delta
     base_model = ControlModel(model, [layers[0]])
     base_forms = []
     for ids in prompt_ids:
         base_model.reset()
         txt = _generate(base_model, tok, ids, seed=seeds[0])
-        base_forms.append(formality_score(txt))
+        base_forms.append(scorer(txt))
     base_form = float(np.mean(base_forms))
     base_model.unwrap()
 
@@ -537,7 +595,7 @@ def layer_sweep(
                 cmodel.reset()
                 cmodel.set_control(vec, layer_coeff)
                 txt = _generate(cmodel, tok, ids, seed=seed)
-                forms.append(formality_score(txt))
+                forms.append(scorer(txt))
                 reps.append(repetition_rate(txt))
                 ppls.append(_ppl_unsteered(cmodel, tok, txt))
             rows.append(
@@ -549,7 +607,7 @@ def layer_sweep(
                     "resid_norm": resid,
                     "coeff": layer_coeff,
                     "alpha_norm": alpha,
-                    "formality": float(np.mean(forms)),
+                    "effect": float(np.mean(forms)),
                     "repetition": float(np.mean(reps)),
                     "ppl": float(np.nanmean(ppls)),
                 }
@@ -559,9 +617,10 @@ def layer_sweep(
     wall = time.time() - t0
     return {
         "mode": "alpha" if target_alpha is not None else "coeff",
+        "concept": concept,
         "coeff": coeff,
         "target_alpha": target_alpha,
-        "base_formality": base_form,
+        "base_effect": base_form,
         "rows": rows,
         "wall_s": wall,
         "n_layers": n_layers,
@@ -696,7 +755,7 @@ def probe(layer: int = 14) -> None:
     print(f"{'coeff':>7} {'alpha_n':>8} {'formality':>10} {'repeat':>8} {'ppl':>9}")
     for r in res["rows"]:
         print(f"{r['coeff']:>7.1f} {r['alpha_norm']:>8.3f} "
-              f"{r['formality']:>10.3f} {r['repetition']:>8.3f} {r['ppl']:>9.2f}")
+              f"{r['effect']:>10.3f} {r['repetition']:>8.3f} {r['ppl']:>9.2f}")
 
 
 @app.local_entrypoint()
@@ -738,16 +797,16 @@ def run_dose(
     os.makedirs("results", exist_ok=True)
     with open(f"results/{stem}.csv", "w", newline="") as f:
         w = csv.DictWriter(
-            f, fieldnames=["coeff", "seed", "alpha_norm", "formality",
+            f, fieldnames=["coeff", "seed", "alpha_norm", "effect",
                            "repetition", "ppl"])
         w.writeheader()
         for r in rows:
             w.writerow({k: r[k] for k in w.fieldnames})
 
-    agg = _agg(rows, "coeff", ("formality", "repetition", "ppl", "alpha_norm"))
+    agg = _agg(rows, "coeff", ("effect", "repetition", "ppl", "alpha_norm"))
     cs = sorted(agg)
-    form_m = [agg[c]["formality"][0] for c in cs]
-    form_s = [agg[c]["formality"][1] for c in cs]
+    form_m = [agg[c]["effect"][0] for c in cs]
+    form_s = [agg[c]["effect"][1] for c in cs]
     rep_m = [agg[c]["repetition"][0] for c in cs]
     ppl_m = [agg[c]["ppl"][0] for c in cs]
 
@@ -781,7 +840,7 @@ def run_dose(
     for c in cs:
         a = agg[c]
         print(f"{c:>7.1f} {a['alpha_norm'][0]:>8.3f} "
-              f"{a['formality'][0]:>8.2f}±{a['formality'][1]:<5.2f} "
+              f"{a['effect'][0]:>8.2f}±{a['effect'][1]:<5.2f} "
               f"{a['repetition'][0]:>8.3f} {a['ppl'][0]:>8.2f}")
 
 
@@ -811,7 +870,7 @@ def run_layer_sweep(target_alpha: float = 0.044, coeff: float = 0.0) -> None:
 
     os.makedirs("results", exist_ok=True)
     fields = ["layer", "layer_pos", "seed", "dir_norm", "resid_norm", "coeff",
-              "alpha_norm", "formality", "repetition", "ppl"]
+              "alpha_norm", "effect", "repetition", "ppl"]
     with open(f"results/{stem}.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
@@ -819,16 +878,16 @@ def run_layer_sweep(target_alpha: float = 0.044, coeff: float = 0.0) -> None:
             w.writerow({k: r[k] for k in fields})
 
     agg = _agg(rows, "layer",
-               ("formality", "repetition", "ppl", "alpha_norm", "coeff"))
+               ("effect", "repetition", "ppl", "alpha_norm", "coeff"))
     ls = sorted(agg)
-    form_m = [agg[layer]["formality"][0] for layer in ls]
-    form_s = [agg[layer]["formality"][1] for layer in ls]
+    form_m = [agg[layer]["effect"][0] for layer in ls]
+    form_s = [agg[layer]["effect"][1] for layer in ls]
     rep_m = [agg[layer]["repetition"][0] for layer in ls]
 
     fig, ax1 = plt.subplots(figsize=(11, 5))
     ax1.errorbar(ls, form_m, yerr=form_s, marker="o", capsize=3, color="C0",
                  label="formality")
-    ax1.axhline(res["base_formality"], color="gray", ls="--", lw=1,
+    ax1.axhline(res["base_effect"], color="gray", ls="--", lw=1,
                 label="baseline (coeff 0)")
     ax1.set_xlabel("layer index (absolute)")
     ax1.set_ylabel("formality proxy", color="C0")
@@ -850,8 +909,8 @@ def run_layer_sweep(target_alpha: float = 0.044, coeff: float = 0.0) -> None:
     # coherence-gated peak (exclude degenerate points)
     coherent = [layer for layer in ls
                 if agg[layer]["repetition"][0] < 0.15 and agg[layer]["ppl"][0] < 6]
-    best = max(coherent, key=lambda layer: agg[layer]["formality"][0])
-    print(f"\nmode={res['mode']}  baseline formality: {res['base_formality']:.3f}")
+    best = max(coherent, key=lambda layer: agg[layer]["effect"][0])
+    print(f"\nmode={res['mode']}  baseline effect: {res['base_effect']:.3f}")
     print(f"{'layer':>6} {'frac':>6} {'coeff':>8} {'alpha':>7} "
           f"{'formality':>16} {'repeat':>8} {'ppl':>8}")
     for layer in ls:
@@ -859,7 +918,7 @@ def run_layer_sweep(target_alpha: float = 0.044, coeff: float = 0.0) -> None:
         mark = " <-- coherent peak" if layer == best else ""
         print(f"{layer:>6} {layer / n_layers:>6.2f} {a['coeff'][0]:>8.1f} "
               f"{a['alpha_norm'][0]:>7.3f} "
-              f"{a['formality'][0]:>8.2f}±{a['formality'][1]:<5.2f} "
+              f"{a['effect'][0]:>8.2f}±{a['effect'][1]:<5.2f} "
               f"{a['repetition'][0]:>8.3f} {a['ppl'][0]:>8.2f}{mark}")
 
 
@@ -888,16 +947,17 @@ def _dose_artifacts(res, model_id, layer, stem):
     os.makedirs("results", exist_ok=True)
     with open(f"results/{stem}.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["coeff", "seed", "alpha_norm",
-                                          "formality", "repetition", "ppl"])
+                                          "effect", "repetition", "ppl"])
         w.writeheader()
         for r in rows:
             w.writerow({k: r[k] for k in w.fieldnames})
 
-    agg = _agg(rows, "coeff", ("formality", "repetition", "ppl", "alpha_norm"))
+    concept = res.get("concept", "formality")
+    agg = _agg(rows, "coeff", ("effect", "repetition", "ppl", "alpha_norm"))
     cs = sorted(agg)
     xs = [agg[c]["alpha_norm"][0] for c in cs]  # x-axis in transferable dose
-    form_m = [agg[c]["formality"][0] for c in cs]
-    form_s = [agg[c]["formality"][1] for c in cs]
+    form_m = [agg[c]["effect"][0] for c in cs]
+    form_s = [agg[c]["effect"][1] for c in cs]
     rep_m = [agg[c]["repetition"][0] for c in cs]
     ppl_m = [agg[c]["ppl"][0] for c in cs]
 
@@ -906,8 +966,8 @@ def _dose_artifacts(res, model_id, layer, stem):
     ax1.axvline(0, color="gray", ls=":", lw=1)
     ax1.axvline(SWEET_ALPHA, color="C1", ls="--", lw=1, label=f"anchor α={SWEET_ALPHA}")
     ax1.set_xlabel("alpha_norm (dimensionless dose)")
-    ax1.set_ylabel("formality proxy (higher = more formal)")
-    ax1.set_title(f"EFFECT — dose-response @ layer {layer} ({frac:.2f} depth)")
+    ax1.set_ylabel(f"{concept} proxy (higher = more {concept})")
+    ax1.set_title(f"EFFECT — {concept} dose @ layer {layer} ({frac:.2f} depth)")
     ax1.legend(loc="best")
     ax1.grid(alpha=0.3)
 
@@ -942,28 +1002,29 @@ def _layer_artifacts(res, model_id, stem, tag):
     n_layers = res["n_layers"]
     os.makedirs("results", exist_ok=True)
     fields = ["layer", "layer_pos", "seed", "dir_norm", "resid_norm", "coeff",
-              "alpha_norm", "formality", "repetition", "ppl"]
+              "alpha_norm", "effect", "repetition", "ppl"]
     with open(f"results/{stem}.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
         for r in rows:
             w.writerow({k: r[k] for k in fields})
 
-    agg = _agg(rows, "layer", ("formality", "repetition", "ppl", "coeff"))
+    concept = res.get("concept", "formality")
+    agg = _agg(rows, "layer", ("effect", "repetition", "ppl", "coeff"))
     ls = sorted(agg)
-    form_m = [agg[layer]["formality"][0] for layer in ls]
-    form_s = [agg[layer]["formality"][1] for layer in ls]
+    form_m = [agg[layer]["effect"][0] for layer in ls]
+    form_s = [agg[layer]["effect"][1] for layer in ls]
     rep_m = [agg[layer]["repetition"][0] for layer in ls]
 
     fig, ax1 = plt.subplots(figsize=(11, 5))
     ax1.errorbar(ls, form_m, yerr=form_s, marker="o", capsize=3, color="C0",
-                 label="formality")
-    ax1.axhline(res["base_formality"], color="gray", ls="--", lw=1,
+                 label=concept)
+    ax1.axhline(res["base_effect"], color="gray", ls="--", lw=1,
                 label="baseline")
     ax1.axvline(_inject_layer(n_layers), color="C1", ls=":", lw=1,
                 label=f"{INJECT_FRAC} depth anchor")
     ax1.set_xlabel("layer index (absolute)")
-    ax1.set_ylabel("formality proxy", color="C0")
+    ax1.set_ylabel(f"{concept} proxy", color="C0")
     ax1b = ax1.twinx()
     ax1b.plot(ls, rep_m, marker="s", color="C3", alpha=0.6)
     ax1b.set_ylabel("repetition rate", color="C3")
@@ -981,22 +1042,15 @@ def _layer_artifacts(res, model_id, stem, tag):
 
     coherent = [layer for layer in ls
                 if agg[layer]["repetition"][0] < 0.15 and agg[layer]["ppl"][0] < 6]
-    best = max(coherent or ls, key=lambda layer: agg[layer]["formality"][0])
+    best = max(coherent or ls, key=lambda layer: agg[layer]["effect"][0])
     return {"peak_layer": best, "peak_frac": best / n_layers,
-            "peak_formality": agg[best]["formality"][0],
-            "baseline": res["base_formality"]}
+            "peak_formality": agg[best]["effect"][0],
+            "baseline": res["base_effect"]}
 
 
-@app.local_entrypoint()
-def run_cross(model: str = "llama", skip_train: bool = False) -> None:
-    """Full cross-model run for one model key: train -> dose (alpha grid at
-    INJECT_FRAC depth) -> normalized layer sweep. Emits per-model artifacts."""
-    import json
-
-    assert model in MODELS, f"model must be one of {list(MODELS)}"
+def _resolve_model(model: str):
+    """Return (model_id, key). Gemma is gated -> auto-fall back to Mistral."""
     model_id = MODELS[model]
-
-    # Gemma is gated: probe access, auto-fall back to an ungated model.
     if model == "gemma":
         access = gate_check.remote().get("gemma", {}).get("ok", False)
         if not access:
@@ -1004,46 +1058,79 @@ def run_cross(model: str = "llama", skip_train: bool = False) -> None:
             model = model_id.split("/")[-1].split("-")[0].lower()  # "mistral"
             print(f"gemma-2-9b-it gated -> falling back to {model_id} "
                   f"(report: Gemma deferred pending license)")
+    return model_id, model
 
-    gguf = _gguf_path(model_id)
+
+@app.local_entrypoint()
+def run_cross(model: str = "llama", concept: str = "formality",
+              skip_train: bool = False) -> None:
+    """Full cross-model run for one model key + concept: train -> dose (alpha
+    grid at INJECT_FRAC depth) -> normalized layer sweep. Per-model artifacts."""
+    import json
+
+    assert model in MODELS, f"model must be one of {list(MODELS)}"
+    assert concept in CONCEPTS, f"concept must be one of {list(CONCEPTS)}"
+    model_id, model = _resolve_model(model)
+    gguf = _gguf_path(model_id, concept)
     seeds = [0, 1, 2]
+    tag = model if concept == "formality" else f"{concept}_{model}"
 
     if not skip_train:
-        meta = train_and_export.remote(model_id=model_id, gguf_path=gguf)
+        meta = train_and_export.remote(
+            model_id=model_id, gguf_path=gguf, concept=concept)
         n_layers = meta["n_layers"]
-        print(f"trained {model_id}: {json.dumps({k: meta[k] for k in ('n_layers', 'hidden_size', 'n_pairs')})}")
+        print(f"trained {model_id}/{concept}: {json.dumps({k: meta[k] for k in ('n_layers', 'hidden_size', 'n_pairs')})}")
     else:
-        n_layers = {"qwen": 28, "llama": 32, "gemma": 42}[model]
+        n_layers = {"qwen": 28, "llama": 32, "gemma": 42}.get(model, 32)
 
     layer = _inject_layer(n_layers)
-    print(f"{model}: n_layers={n_layers}  inject layer={layer} "
+    print(f"{tag}: n_layers={n_layers}  inject layer={layer} "
           f"(frac {layer / n_layers:.3f}, target {INJECT_FRAC})")
 
     # dose-response at the anchored layer, alpha grid (past-cliff both ways)
     dres = dose_response.remote(
         layer=layer, seeds=seeds, alphas=ALPHA_GRID,
-        model_id=model_id, gguf_path=gguf)
-    _dose_artifacts(dres, model_id, layer, f"dose_response_{model}")
+        model_id=model_id, gguf_path=gguf, concept=concept)
+    _dose_artifacts(dres, model_id, layer, f"dose_response_{tag}")
 
     # normalized layer sweep, each layer's own direction at fixed dose
     sres = layer_sweep.remote(
         seeds=seeds, layers=list(range(1, n_layers)), target_alpha=SWEET_ALPHA,
-        model_id=model_id, gguf_path=gguf)
-    peak = _layer_artifacts(sres, model_id, f"layer_sweep_{model}",
+        model_id=model_id, gguf_path=gguf, concept=concept)
+    peak = _layer_artifacts(sres, model_id, f"layer_sweep_{tag}",
                             f"alpha_norm={SWEET_ALPHA}")
 
-    dagg = _agg(dres["rows"], "coeff", ("formality", "alpha_norm", "repetition"))
-    print(f"\n===== {model_id} =====")
+    dagg = _agg(dres["rows"], "coeff", ("effect", "alpha_norm", "repetition"))
+    print(f"\n===== {model_id} · {concept} =====")
     print(f"n_layers={n_layers}  inject L{layer} (frac {layer / n_layers:.3f})  "
           f"resid_norm@L={dres['resid_norm']:.1f}  "
-          f"coeff@α{SWEET_ALPHA}={SWEET_ALPHA * dres['resid_norm']:.1f}")
+          f"coeff@a{SWEET_ALPHA}={SWEET_ALPHA * dres['resid_norm']:.1f}")
     print(f"dose wall {dres['wall_s']:.0f}s  sweep wall {sres['wall_s']:.0f}s")
     print(f"layer-sweep coherent peak: L{peak['peak_layer']} "
-          f"(frac {peak['peak_frac']:.2f})  formality {peak['peak_formality']:.2f} "
+          f"(frac {peak['peak_frac']:.2f})  effect {peak['peak_formality']:.2f} "
           f"vs baseline {peak['baseline']:.2f}")
-    print(f"{'alpha':>8} {'formality':>16} {'repeat':>8}")
+    print(f"{'alpha':>8} {'effect':>16} {'repeat':>8}")
     for c in sorted(dagg):
         a = dagg[c]
-        print(f"{a['alpha_norm'][0]:>8.3f} "
-              f"{a['formality'][0]:>8.2f}±{a['formality'][1]:<5.2f} "
+        eff = a["effect"]
+        print(f"{a['alpha_norm'][0]:>8.3f} {eff[0]:>8.2f}±{eff[1]:<5.2f} "
               f"{a['repetition'][0]:>8.3f}")
+
+
+@app.local_entrypoint()
+def run_redose_sweep(model: str = "llama", target_alpha: float = 0.197) -> None:
+    """Task 1: re-run the normalized layer sweep at a model's OWN sweet-spot
+    dose (formality vector, existing gguf). Emits layer_sweep_<model>_redosed."""
+    assert model in MODELS, f"model must be one of {list(MODELS)}"
+    model_id, model = _resolve_model(model)
+    gguf = _gguf_path(model_id, "formality")
+    n_layers = {"qwen": 28, "llama": 32, "gemma": 42}.get(model, 32)
+    sres = layer_sweep.remote(
+        seeds=[0, 1, 2], layers=list(range(1, n_layers)),
+        target_alpha=target_alpha, model_id=model_id, gguf_path=gguf)
+    peak = _layer_artifacts(sres, model_id, f"layer_sweep_{model}_redosed",
+                            f"alpha_norm={target_alpha}")
+    print(f"\n===== {model_id} re-dosed @ alpha_norm={target_alpha} =====")
+    print(f"sweep wall {sres['wall_s']:.0f}s  baseline effect {peak['baseline']:.2f}")
+    print(f"coherent peak L{peak['peak_layer']} (frac {peak['peak_frac']:.2f}) "
+          f"effect {peak['peak_formality']:.2f}")
