@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "steerbench"
+abstract: "A steering-vector report card: effect size, side effects, dose-response, and layer sensitivity for any concept vector."
+authors:
+  - family-names: "Dashtban"
+    given-names: "Bamdad"
+license: "MIT"
+repository-code: "https://github.com/bamdadd/steerbench"
+date-released: "2026-01-01"

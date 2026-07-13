@@ -1,0 +1,38 @@
+[project]
+name = "steerbench"
+version = "0.0.1"
+description = "A steering-vector report card: effect size, side effects, dose-response, and layer sensitivity for any concept vector."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Bamdad Dashtban" }]
+dependencies = []
+
+[project.scripts]
+steer-report = "steerbench.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/steerbench"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.14", "mypy>=1.14", "pre-commit>=4"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
