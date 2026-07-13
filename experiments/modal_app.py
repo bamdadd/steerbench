@@ -346,6 +346,70 @@ def introspect() -> str:
 # ---------------------------------------------------------------------------
 
 
+@app.function(gpu=GPU, timeout=5400, volumes={VOL: vol}, secrets=[HF_SECRET])
+def stability_check(
+    model_id: str = GEMMA_FALLBACK,
+    concepts: list[str] | None = None,
+    n_runs: int = 3,
+    subsample: float = 0.7,
+) -> dict:
+    """Extraction-stability confound check (no sweeps). Re-extract each concept's
+    ControlVector `n_runs` times from independent random subsamples of the pair
+    set, then report mean pairwise cosine of the directions — at the injection
+    layer and averaged across all layers.
+
+    high cosine (~1.0) => stable direction (inertness is a real decode-vs-steer
+    dissociation); low cosine (<~0.9) => noisy/unstable extraction (repeng #78).
+    """
+    import itertools
+    import random
+
+    import numpy as np
+    from repeng import ControlModel, ControlVector
+
+    concepts = concepts or ["formality", "sentiment"]
+    model, tok = _load_model_and_tokenizer(model_id)
+    n_layers = model.config.num_hidden_layers
+    inject = _inject_layer(n_layers)
+    wrapped = ControlModel(model, list(range(-1, -n_layers, -1)))
+
+    def cos(a, b):
+        return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-9))
+
+    out = {"model": model_id, "inject_layer": inject, "n_layers": n_layers,
+           "n_runs": n_runs, "subsample": subsample, "concepts": {}}
+
+    for concept in concepts:
+        full = build_dataset(tok, concept=concept)
+        k = max(2, int(len(full) * subsample))
+        runs = []
+        for r in range(n_runs):
+            rng = random.Random(1000 + r)  # deterministic per run, distinct data
+            subset = rng.sample(full, k)
+            vec = ControlVector.train(wrapped, tok, subset, batch_size=16)
+            runs.append(vec.directions)
+        # pairwise cosines (sign-consistent: repeng orients by projection sign)
+        pairs = list(itertools.combinations(range(n_runs), 2))
+        inj_cos = [cos(runs[i][inject], runs[j][inject]) for i, j in pairs]
+        layers = sorted(runs[0].keys())
+        mean_cos_per_pair = [
+            float(np.mean([cos(runs[i][layer], runs[j][layer]) for layer in layers]))
+            for i, j in pairs
+        ]
+        out["concepts"][concept] = {
+            "inject_cos_mean": float(np.mean(inj_cos)),
+            "inject_cos_min": float(np.min(inj_cos)),
+            "inject_cos_pairs": [round(c, 4) for c in inj_cos],
+            "mean_layer_cos": float(np.mean(mean_cos_per_pair)),
+            "n_pairs_data": k,
+        }
+        c = out["concepts"][concept]
+        print(f"{concept}: inject_cos {c['inject_cos_mean']:.4f} "
+              f"(min {c['inject_cos_min']:.4f}, pairs {c['inject_cos_pairs']})  "
+              f"mean-layer_cos {c['mean_layer_cos']:.4f}")
+    return out
+
+
 @app.function(gpu=GPU, timeout=3600, volumes={VOL: vol}, secrets=[HF_SECRET])
 def train_and_export(
     model_id: str = MODEL_ID,
@@ -638,6 +702,30 @@ def train_export() -> None:
 
     meta = train_and_export.remote()
     print(json.dumps(meta, indent=2))
+
+
+@app.local_entrypoint()
+def run_stability(model: str = "gemma") -> None:
+    """Extraction-stability confound check for a model's formality vs sentiment
+    directions. gemma -> Mistral fallback. Writes results/stability_<model>.json."""
+    import json
+    import os
+
+    model_id, model = _resolve_model(model)
+    res = stability_check.remote(model_id=model_id,
+                                 concepts=["formality", "sentiment"])
+    os.makedirs("results", exist_ok=True)
+    with open(f"results/stability_{model}.json", "w") as f:
+        json.dump(res, f, indent=2)
+    print(json.dumps(res, indent=2))
+    f_cos = res["concepts"]["formality"]["inject_cos_mean"]
+    s_cos = res["concepts"]["sentiment"]["inject_cos_mean"]
+    print(f"\n{model_id}")
+    print(f"  formality inject cosine: {f_cos:.4f}")
+    print(f"  sentiment inject cosine: {s_cos:.4f}  (positive control)")
+    verdict = ("stable-but-inert (real decode-vs-steer dissociation)"
+               if f_cos > 0.9 else "unstable extraction (repeng #78 noise)")
+    print(f"  => formality direction is {verdict}")
 
 
 @app.function(timeout=600, volumes={VOL: vol})  # CPU only
