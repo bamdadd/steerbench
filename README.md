@@ -119,6 +119,12 @@ Consumes vectors produced by [repeng](https://github.com/vgel/repeng) —
 extraction is not reimplemented. Ships benign example concepts (formality,
 sentiment, verbosity).
 
+## Related reading
+
+[Two bugs in repeng](https://bamdad.substack.com/p/two-bugs-in-repeng) — the
+non-determinism bug found while building steerbench, and the one-line fix
+([vgel/repeng#79](https://github.com/vgel/repeng/pull/79)).
+
 ## License
 
 MIT.
