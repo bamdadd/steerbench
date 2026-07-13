@@ -6,7 +6,21 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Bamdad Dashtban" }]
+# Core stays light: parsing sweep CSVs and rendering the card is pure-Python.
+# Everything heavy (vector I/O, models, plots, the Modal harness) is optional.
 dependencies = []
+
+[project.optional-dependencies]
+# Steering-vector I/O: repeng's native gguf + torch tensors (steerbench.vectors).
+vectors = ["torch", "gguf"]
+# Perplexity (coherence axis) + the HF sentiment backend.
+model = ["torch", "transformers"]
+# Held-out MMLU / GSM8K side-effect slices.
+data = ["datasets"]
+# Report-card plots (dose-response hero + layer sensitivity).
+report = ["matplotlib"]
+# Full GPU/Modal harness (experiments/modal_app.py). Not imported by core.
+gpu = ["torch", "transformers", "modal", "repeng", "gguf", "matplotlib", "numpy"]
 
 [project.scripts]
 steer-report = "steerbench.cli:main"
@@ -24,6 +38,9 @@ dev = ["pytest>=8", "ruff>=0.14", "mypy>=1.14", "pre-commit>=4"]
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
+# experiments/ is the GPU/Modal harness (steerbench[gpu]); it uses lazy in-fn
+# imports for Modal remote execution and isn't part of the core package.
+extend-exclude = ["experiments"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -32,6 +49,19 @@ select = ["E", "F", "I", "UP", "B"]
 python_version = "3.11"
 strict = true
 files = ["src"]
+
+# Optional, lazily-imported deps ship no stubs (or none mypy can see); modules
+# cast at the boundary so their absence never leaks Any into a typed return.
+[[tool.mypy.overrides]]
+module = [
+    "torch.*",
+    "transformers.*",
+    "datasets.*",
+    "matplotlib.*",
+    "gguf.*",
+    "numpy.*",
+]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 addopts = "-q"
