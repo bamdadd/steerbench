@@ -163,3 +163,50 @@ proxy is noisy, single injection depth, one Mistral version — not proof Mistra
 unsteerable in general, only for this method/site.)
 
 **3-concepts acceptance criterion:** formality ✓, sentiment ✓, verbosity pending.
+
+---
+
+## Follow-up 3 — stability confound: is Mistral's formality inertness real?
+
+Before claiming "Mistral resists formality steering," rule out the ironic
+confound (repeng #78): maybe the Mistral **formality direction is just a low-SNR /
+unstable extraction**, not a real, stable-but-inert direction. Cheap check
+(extraction only, no sweeps): re-extract each vector **3× from independent random
+70% subsamples** of the pair set, measure pairwise cosine of the resulting
+directions at the injection layer (L20). Sentiment is the **positive control**
+(it steers, so should extract stably).
+
+| Mistral-7B direction | inject-layer pairwise cosine | verdict |
+|:--|:--|:--|
+| **formality** | **−0.13** (pairs: −0.81, −0.29, +0.69) | **unstable — extraction noise** |
+| **sentiment** (control) | **+0.95** (0.94, 0.95, 0.96) | stable (as expected — it steers) |
+
+**Resolution.** The formality direction is **not reproducible** in Mistral-7B —
+independent extractions are near-orthogonal and even anti-parallel. The positive
+control confirms the method works (sentiment extracts at cosine 0.95 and steers).
+So Mistral's formality result is a **low-SNR / unstable extraction (repeng #78
+territory), not a genuine decode-vs-steer dissociation.** This is a *different*
+(and cleaner) claim than "architectural resistance":
+
+> **steerbench catches when a diff-of-means concept vector fails to extract
+> reliably** — Mistral-7B's formality direction is unstable across resamples
+> (cosine ≈ 0), which fully explains its flat dose-response, whereas its sentiment
+> direction is stable (cosine ≈ 0.95) and does steer. A steering report card must
+> report extraction stability, or "inert" and "un-extractable" get conflated.
+
+(Note: cosine averaged across *all* layers is low for both concepts — most layers
+carry no concept and are pure noise — so the **injection-layer** cosine is the
+meaningful figure; there sentiment 0.95 vs formality −0.13 is unambiguous.)
+Artifact: `artifacts/stability_mistral.json`.
+
+### Revised cross-architecture picture
+
+| Model | formality | sentiment |
+|:--|:--|:--|
+| Qwen2.5-7B | steers (vector stable) | steers (vector stable) |
+| Llama-3.1-8B | steers weakly (needs high dose) | steers weakly |
+| Mistral-7B | **vector un-extractable** (cosine ≈ 0) | steers (vector stable, cosine 0.95) |
+
+The headline stands — steerability varies by architecture and concept — but the
+Mistral formality cell is now correctly attributed to **extraction failure**, not
+resistance. Worth a stability panel on every steerbench report card.
