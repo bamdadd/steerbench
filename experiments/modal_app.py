@@ -37,6 +37,7 @@ image = (
         "gguf==0.10.0",
         "sentencepiece==0.2.0",
         "protobuf==5.28.2",
+        "datasets==2.21.0",
     )
     .add_local_dir("src", "/root/src")
 )
@@ -368,6 +369,105 @@ def introspect() -> str:
 # ---------------------------------------------------------------------------
 # STEP 2 — train + export to gguf on the Volume.
 # ---------------------------------------------------------------------------
+
+
+@app.function(gpu=GPU, timeout=7200, volumes={VOL: vol}, secrets=[HF_SECRET])
+def side_effects(
+    model_id: str = MODEL_ID,
+    gguf_path: str | None = None,
+    layer: int = 17,
+    alphas: list[float] | None = None,
+    seeds: list[int] | None = None,
+    n_mmlu: int = 40,
+    n_gsm8k: int = 30,
+) -> dict:
+    """Capability side-effects vs steering dose. Measures MMLU + GSM8K slice
+    accuracy UNSTEERED (alpha 0) and STEERED at each alpha (sweet spot + past
+    cliff), 3 seeds. Reuses steerbench.metrics loaders/scorers. resid_norm is
+    measured; per-alpha coeff = alpha * resid_norm."""
+    import sys
+    import time
+
+    sys.path.insert(0, "/root/src")
+    vol.reload()
+    import numpy as np
+    import torch
+
+    from steerbench.metrics import (
+        evaluate_gsm8k,
+        evaluate_mmlu,
+        load_gsm8k_slice,
+        load_mmlu_slice,
+    )
+    from steerbench.vectors import load_vector
+
+    alphas = alphas if alphas is not None else [0.044, 0.284]  # sweet, past-cliff
+    seeds = seeds if seeds is not None else [0, 1, 2]
+    from pathlib import Path
+    cache = Path(f"{VOL}/bench_cache")
+
+    vec = load_vector(gguf_path or GGUF_PATH)
+    dnorm = float(np.linalg.norm(vec.directions[layer]))
+    model, tok = _load_model_and_tokenizer(model_id)
+    tok.padding_side = "left"  # correct offset for batched decode
+    from repeng import ControlModel
+
+    cmodel = ControlModel(model, [layer])
+    resid_norm = _resid_norm_at_layer(model, tok, layer)
+
+    mmlu = load_mmlu_slice(n=n_mmlu, seed=0, cache_dir=cache)
+    gsm8k = load_gsm8k_slice(n=n_gsm8k, seed=0, cache_dir=cache)
+    vol.commit()  # persist downloaded slices
+
+    def make_gen(seed: int, max_new: int, batch: int):
+        def gen(prompts):
+            outs = []
+            for i in range(0, len(prompts), batch):
+                chunk = prompts[i : i + batch]
+                # wrap each in the model's chat template so it actually answers
+                msgs = [[{"role": "user", "content": p}] for p in chunk]
+                texts = [
+                    tok.apply_chat_template(m, tokenize=False, add_generation_prompt=True)
+                    for m in msgs
+                ]
+                enc = tok(texts, return_tensors="pt", padding=True).to(model.device)
+                torch.manual_seed(seed)
+                with torch.no_grad():
+                    out = cmodel.generate(
+                        **enc, do_sample=True, temperature=0.7, top_p=0.9,
+                        max_new_tokens=max_new, pad_token_id=tok.pad_token_id)
+                for row in out:
+                    outs.append(tok.decode(row[enc["input_ids"].shape[1]:],
+                                           skip_special_tokens=True))
+            return outs
+        return gen
+
+    t0 = time.time()
+    # conditions: unsteered (alpha 0) + each requested alpha
+    conditions = [("unsteered", 0.0)] + [(f"alpha_{a}", a) for a in alphas]
+    rows = []  # rich: benchmark, condition, alpha, coeff, seed, acc
+    for label, alpha in conditions:
+        coeff = alpha * resid_norm / dnorm
+        for seed in seeds:
+            cmodel.reset()
+            if alpha != 0.0:
+                cmodel.set_control(vec, coeff)
+            m_acc = evaluate_mmlu(mmlu, make_gen(seed, max_new=8, batch=16))
+            cmodel.reset()
+            if alpha != 0.0:
+                cmodel.set_control(vec, coeff)
+            g_acc = evaluate_gsm8k(gsm8k, make_gen(seed, max_new=256, batch=8))
+            rows.append({"benchmark": "mmlu", "condition": label, "alpha": alpha,
+                         "coeff": coeff, "seed": seed, "acc": m_acc})
+            rows.append({"benchmark": "gsm8k", "condition": label, "alpha": alpha,
+                         "coeff": coeff, "seed": seed, "acc": g_acc})
+        print(f"{label} (alpha {alpha}) done")
+    wall = time.time() - t0
+    return {
+        "model": model_id, "layer": layer, "resid_norm": resid_norm,
+        "dir_norm": dnorm, "n_mmlu": len(mmlu), "n_gsm8k": len(gsm8k),
+        "seeds": seeds, "alphas": alphas, "rows": rows, "wall_s": wall,
+    }
 
 
 @app.function(gpu=GPU, timeout=5400, volumes={VOL: vol}, secrets=[HF_SECRET])
@@ -726,6 +826,62 @@ def train_export() -> None:
 
     meta = train_and_export.remote()
     print(json.dumps(meta, indent=2))
+
+
+@app.local_entrypoint()
+def run_side_effects(model: str = "qwen", sweet: float = 0.044,
+                     cliff: float = 0.284) -> None:
+    """Side-effects panel: MMLU + GSM8K accuracy unsteered vs steered (sweet +
+    past-cliff), 3 seeds. Writes results/side_effects_<model>.csv (canonical
+    benchmark,unsteered_acc,steered_acc for report.py) + _dose.csv (per-dose)."""
+    import csv
+    import os
+    import statistics as st
+
+    model_id, model = _resolve_model(model)
+    gguf = _gguf_path(model_id, "formality")
+    n_layers = {"qwen": 28, "llama": 32, "gemma": 42}.get(model, 32)
+    layer = _inject_layer(n_layers)
+    res = side_effects.remote(model_id=model_id, gguf_path=gguf, layer=layer,
+                              alphas=[sweet, cliff])
+    rows = res["rows"]
+    os.makedirs("results", exist_ok=True)
+
+    def agg(bench, cond):
+        vals = [r["acc"] for r in rows if r["benchmark"] == bench and r["condition"] == cond]
+        return (st.mean(vals), st.pstdev(vals)) if vals else (float("nan"), 0.0)
+
+    benches = ["mmlu", "gsm8k"]
+    # rich per-dose CSV
+    with open(f"results/side_effects_{model}_dose.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["benchmark", "condition", "alpha", "acc_mean", "acc_std", "n_seeds"])
+        for bench in benches:
+            for label, alpha in [("unsteered", 0.0), (f"alpha_{sweet}", sweet),
+                                 (f"alpha_{cliff}", cliff)]:
+                m, s = agg(bench, label)
+                w.writerow([bench, label, alpha, f"{m:.4f}", f"{s:.4f}", len(res["seeds"])])
+
+    # canonical CSV for report.py (steered = sweet spot)
+    with open(f"results/side_effects_{model}.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["benchmark", "unsteered_acc", "steered_acc"])
+        for bench in benches:
+            u, _ = agg(bench, "unsteered")
+            s, _ = agg(bench, f"alpha_{sweet}")
+            w.writerow([bench, f"{u:.4f}", f"{s:.4f}"])
+
+    print(f"\n===== {model_id} side effects · layer {layer} · "
+          f"resid_norm {res['resid_norm']:.1f} · wall {res['wall_s']:.0f}s =====")
+    print(f"MMLU n={res['n_mmlu']}  GSM8K n={res['n_gsm8k']}  seeds {res['seeds']}")
+    print(f"{'benchmark':>8} {'unsteered':>18} {'sweet@'+str(sweet):>18} {'cliff@'+str(cliff):>18}")
+    for bench in benches:
+        u = agg(bench, "unsteered")
+        sw = agg(bench, f"alpha_{sweet}")
+        cl = agg(bench, f"alpha_{cliff}")
+        print(f"{bench:>8} {u[0]:>10.3f}±{u[1]:<6.3f} {sw[0]:>10.3f}±{sw[1]:<6.3f} "
+              f"{cl[0]:>10.3f}±{cl[1]:<6.3f}")
+    print("wrote results/side_effects_%s.csv + _dose.csv" % model)
 
 
 @app.local_entrypoint()
