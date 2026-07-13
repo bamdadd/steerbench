@@ -271,3 +271,46 @@ extraction stability** — it separates "the vector is noise" from "the vector i
 real but the model barely moves."
 
 **3-concept acceptance criterion: formality ✓ · sentiment ✓ · verbosity ✓.**
+
+---
+
+## Follow-up 5 — SIDE EFFECTS (capability vs dose): the 4th report-card panel
+
+Held-out **MMLU** (40) + **GSM8K** (30) slice accuracy, formality vector at each
+model's 0.61-depth layer, **unsteered vs steered at the sweet spot (α=0.044) vs
+past-the-cliff (α=0.284)**, 3 seeds, A100. Batched chat-templated generation;
+slices cached on the Volume. Reuses `steerbench.metrics` loaders/scorers; emits
+the `benchmark,unsteered_acc,steered_acc` CSV `report.py` consumes — the 4th
+panel now populates (rendered example: `artifacts/example_report_card/`).
+
+| Model | benchmark | unsteered | sweet α=0.044 | **past-cliff α=0.284** | wall |
+|:--|:--|--:|--:|--:|--:|
+| **Qwen2.5-7B** | MMLU | 0.567 | 0.608 | **0.000** | 311s |
+| | GSM8K | 0.544 | 0.467 | **0.000** | |
+| **Llama-3.1-8B** | MMLU | 0.575 | 0.517 | **0.358** | 291s |
+| | GSM8K | 0.556 | 0.556 | **0.367** | |
+| **Mistral-7B** | MMLU | 0.575 | 0.567 | **0.525** | 532s |
+| | GSM8K | 0.378 | 0.367 | **0.333** | |
+
+**The story — side effects climb with dose, and the shape is architectural:**
+- **Sweet spot (α=0.044): capability is largely preserved** on every model
+  (Qwen MMLU even nudges up; GSM8K takes a small hit). Steering at the right dose
+  is close to free.
+- **Past the cliff (α=0.284): Qwen COLLAPSES to 0.000** on both benchmarks —
+  over-steering turns output to repetition/gibberish (matches the coherence cliff:
+  repetition 0.5, ppl spike). This is the money shot: **the same knob that steers
+  formality, turned too far, destroys the model's reasoning entirely.**
+- **The collapse tracks each model's coherence cliff, so it's dose-relative, not
+  universal.** At the *same* normalized dose 0.284, Llama only drops to ~0.36
+  (its cliff is further out) and **Mistral barely moves (~0.53/0.33)** — because
+  Mistral's formality vector is un-extractable noise (cosine −0.13), so even a
+  large injection doesn't coherently perturb it. Extraction stability →
+  dose-response → coherence cliff → side-effect degradation all line up.
+
+This closes the report card: **effect (dose-response) · coherence (cliff) · layer
+sensitivity · side effects** — all four panels populated with real A100 data, plus
+an extraction-stability panel that flags un-extractable vectors.
+
+Artifacts: `artifacts/side_effects_{qwen,llama,mistral}.csv` (report schema) +
+`_dose.csv` (per-dose mean±std). Rendered 4-panel card:
+`artifacts/example_report_card/qwen_formality.{md,html}`.

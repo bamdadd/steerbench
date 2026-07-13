@@ -1,0 +1,7 @@
+benchmark,condition,alpha,acc_mean,acc_std,n_seeds
+mmlu,unsteered,0.0,0.5750,0.0000,3
+mmlu,alpha_0.044,0.044,0.5667,0.0118,3
+mmlu,alpha_0.284,0.284,0.5250,0.0540,3
+gsm8k,unsteered,0.0,0.3778,0.0567,3
+gsm8k,alpha_0.044,0.044,0.3667,0.1247,3
+gsm8k,alpha_0.284,0.284,0.3333,0.0272,3

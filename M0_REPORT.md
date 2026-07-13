@@ -142,3 +142,33 @@ usable alpha band ~0.017–0.05, degrades past ±0.09.** Artifacts:
 | effect cliff (negative) | coeff ≈ −60 | coeff ≈ −40 (earlier) |
 | effect strength | strong, clean | weak, noisy |
 | walls | dose 426 s · layer-sweep 1162 s | dose 544 s |
+
+---
+
+## Side effects — capability vs steering dose (cross-model)
+
+Held-out **MMLU** (40) + **GSM8K** (30) slice accuracy, formality vector at each
+model's 0.61-depth layer. **Unsteered vs steered at the sweet spot (α_norm=0.044)
+vs past-the-cliff (α_norm=0.284).** Hardware **A100**, **3 seeds** (sampling,
+temp 0.7), mean±std; batched chat-templated generation, slices cached on the
+Modal Volume. Full detail + analysis in `CROSS_MODEL_REPORT.md` (Follow-up 5).
+
+| Model | benchmark | unsteered | sweet α=0.044 | past-cliff α=0.284 | wall |
+|:--|:--|--:|--:|--:|--:|
+| **Qwen2.5-7B** | MMLU | 0.567±0.012 | 0.608±0.012 | **0.000±0.000** | 311 s |
+| | GSM8K | 0.544±0.016 | 0.467±0.054 | **0.000±0.000** | |
+| **Llama-3.1-8B** | MMLU | 0.575±0.041 | 0.517±0.051 | 0.358±0.031 | 291 s |
+| | GSM8K | 0.556±0.042 | 0.556±0.031 | 0.367±0.072 | |
+| **Mistral-7B** | MMLU | 0.575±0.000 | 0.567±0.012 | 0.525±0.054 | 532 s |
+| | GSM8K | 0.378±0.057 | 0.367±0.125 | 0.333±0.027 | |
+
+**Read:** the sweet spot preserves capability on every model; past the cliff Qwen
+**collapses to 0%** on both benchmarks (over-steering → gibberish), while Llama
+only drops to ~0.36 (its coherence cliff is further out) and Mistral barely moves
+(~0.53/0.33 — its formality vector is un-extractable noise, so injection doesn't
+coherently perturb it). Side-effect degradation tracks each model's coherence
+cliff. This is the 4th report-card panel; it renders end-to-end via
+`report.py::build_report` (example: `artifacts/example_report_card/`).
+
+Artifacts: `artifacts/side_effects_{qwen,llama,mistral}.csv` (report schema:
+`benchmark,unsteered_acc,steered_acc`) + `_dose.csv` (per-dose mean±std).
