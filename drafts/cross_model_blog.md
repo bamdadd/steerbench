@@ -59,13 +59,21 @@ Llama, whose effect doesn't stop rising until coherence does. This is the one
 claim here we would defend: it rides on the model-independent `alpha_norm` axis
 and on coherence-gated peaks, not on any proxy-scale number.
 
-One caveat we hold ourselves to — the same one the cautionary case below is
-about. This shape claim is only as trustworthy as the vectors under it. Qwen's is
-3-seed stable and its interior optimum is visible across the sweep; the honest
-gate before calling Llama's *shape* settled (rather than strong) is the identical
-extraction-stability check we run on Mistral below, applied to the Llama formality
-direction. We apply the lesson to our own headline, not just to the cautionary
-tale.
+We hold this claim to the same gate the cautionary case below is about: it is
+only as trustworthy as the vectors under it, so we stability-checked them. Both
+formality directions are **stable at adequate data** — injection-layer cosine
+across re-extractions **0.97 (Qwen)** and **0.83 (Llama)** at a 90% subsample of
+the 69 contrastive pairs (Llama's spread is modestly wider, one pair at 0.71).
+The shape difference therefore reflects the architectures, not extraction
+variance. We applied the lesson to our own headline before publishing it.
+
+One honest caveat that *strengthens* the piece rather than weakening it:
+formality extraction is **data-hungry**. Drop to a 70% subsample of those 69
+pairs and the same cosine falls to **0.55–0.64** — the vector's stability depends
+on how much contrastive data you gave it. Qwen's 0.64 at 70% is data-subsample
+sensitivity (only 69 pairs), not algorithmic noise; it recovers to 0.97 with the
+full set. Vector stability is itself a thing to measure, not assume — another
+face of the same repeng failure mode below.
 
 ## The cautionary case — telling a bad vector from a stubborn model
 
@@ -74,19 +82,32 @@ directions**: positive `alpha` never lifted formality above the 4.83 baseline,
 and negative `alpha` barely moved it despite plenty of downward headroom. The
 obvious read is "Mistral won't take formality steering."
 
-**That read would have been wrong.** A 3× re-extraction **stability check** — run
-the same extraction on different seeds/splits and measure how much the resulting
+**That read would have been wrong.** A re-extraction **stability check** — run the
+same extraction on different subsamples and measure how much the resulting
 direction agrees with itself — showed the formality direction is **unstable**:
 
 - injection-layer cosine similarity across re-extractions ≈ **−0.13**, and
   **sign-flipping** run to run (−0.81, −0.29, +0.69). A vector that points a
   different way every time you extract it is not measuring anything.
-- the **sentiment** direction on the **same model** is rock-stable (cosine ≈
-  **0.95**) and steers fine (**+0.65** over its own sentiment baseline).
+- and this is **not** just the data-hunger from the last section. At the *same*
+  70% subsample, the **sentiment** direction on the **same model** is rock-stable
+  (cosine **0.95**) and steers fine (**+0.65** over its own sentiment baseline).
+  Same model, same data fraction, same recipe — sentiment holds, formality
+  collapses. So it is not "small data broke everything"; Mistral's *formality*
+  extraction fails specifically.
+
+And it is a *different failure than data-hunger*, not just a worse degree of it —
+which matters, because we measured Mistral formality at the same data-starved 70%
+where Qwen formality also dips. But those two dips are different animals. Qwen's
+ss70 direction is **consistent and positive** (0.64) and **recovers to 0.97**
+with the full data — a weak-but-real signal starved of pairs. Mistral's
+**sign-flips** (−0.81, −0.29, +0.69): a direction that reverses run to run is not
+a weak signal, it is **noise**. Degradation you can fix with more data; a
+sign-flipping direction is not measuring anything to begin with.
 
 So Mistral's flat formality curve is a **low-SNR extraction**, not architectural
-resistance. Same model, same recipe: one concept produced a stable, working
-vector and the other produced noise. The flatness was the vector, not the model.
+resistance. One concept produced a stable, working vector and the other produced
+noise. The flatness was the vector, not the model.
 
 The lesson is the product. A single steered generation can look "meh" for either
 reason — a genuinely stubborn model or a broken vector — and you **cannot tell
