@@ -115,6 +115,18 @@ CONCEPTS = {
             "a resentful person disgusted with the world",
         ],
     },
+    "verbosity": {
+        "pos": [
+            "an extremely verbose, long-winded person who over-explains everything",
+            "a rambling writer who piles on excessive detail and elaboration",
+            "a wordy person who never uses one word when ten will do",
+        ],
+        "neg": [
+            "an extremely terse, concise person who uses as few words as possible",
+            "a blunt writer who answers in the shortest way possible",
+            "a laconic person who gives clipped, one-line answers",
+        ],
+    },
 }
 
 # Neutral seed text; we truncate it at many points to get many suffixes.
@@ -230,7 +242,19 @@ def sentiment_score(text: str) -> float:
     return 100.0 * (pos - neg) / n
 
 
-SCORERS = {"formality": formality_score, "sentiment": sentiment_score}
+def verbosity_score(text: str) -> float:
+    """Cheap verbosity proxy = word count of the continuation. Higher = more
+    verbose (terse steering makes the model stop early; verbose fills the cap)."""
+    import re
+
+    return float(len(re.findall(r"[A-Za-z']+", text)))
+
+
+SCORERS = {
+    "formality": formality_score,
+    "sentiment": sentiment_score,
+    "verbosity": verbosity_score,
+}
 
 
 def repetition_rate(text: str) -> float:
@@ -705,27 +729,26 @@ def train_export() -> None:
 
 
 @app.local_entrypoint()
-def run_stability(model: str = "gemma") -> None:
-    """Extraction-stability confound check for a model's formality vs sentiment
-    directions. gemma -> Mistral fallback. Writes results/stability_<model>.json."""
+def run_stability(model: str = "gemma", concepts: str = "formality,sentiment") -> None:
+    """Extraction-stability check: re-extract each concept's direction 3x from
+    independent subsamples, report pairwise cosine at the inject layer. gemma ->
+    Mistral fallback. Writes results/stability_<concepts>_<model>.json."""
     import json
     import os
 
     model_id, model = _resolve_model(model)
-    res = stability_check.remote(model_id=model_id,
-                                 concepts=["formality", "sentiment"])
+    clist = [c.strip() for c in concepts.split(",")]
+    res = stability_check.remote(model_id=model_id, concepts=clist)
     os.makedirs("results", exist_ok=True)
-    with open(f"results/stability_{model}.json", "w") as f:
+    slug = "_".join(clist)
+    with open(f"results/stability_{slug}_{model}.json", "w") as f:
         json.dump(res, f, indent=2)
     print(json.dumps(res, indent=2))
-    f_cos = res["concepts"]["formality"]["inject_cos_mean"]
-    s_cos = res["concepts"]["sentiment"]["inject_cos_mean"]
     print(f"\n{model_id}")
-    print(f"  formality inject cosine: {f_cos:.4f}")
-    print(f"  sentiment inject cosine: {s_cos:.4f}  (positive control)")
-    verdict = ("stable-but-inert (real decode-vs-steer dissociation)"
-               if f_cos > 0.9 else "unstable extraction (repeng #78 noise)")
-    print(f"  => formality direction is {verdict}")
+    for c in clist:
+        cos = res["concepts"][c]["inject_cos_mean"]
+        tag = "STABLE" if cos > 0.9 else "unstable (extraction noise)"
+        print(f"  {c} inject cosine: {cos:.4f}  -> {tag}")
 
 
 @app.function(timeout=600, volumes={VOL: vol})  # CPU only
