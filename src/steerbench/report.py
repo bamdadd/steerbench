@@ -52,6 +52,10 @@ import statistics
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
+
+# How to pick the sweet spot from the effect shift off baseline.
+SweetSpotDirection = Literal["increase", "decrease", "abs"]
 
 # Documented coherence direction — analyze_dose keys its floor logic off this
 # instead of assuming a higher-is-better score.
@@ -104,8 +108,9 @@ class DoseAnalysis:
 
     ``baseline`` is the unsteered reference (coeff nearest 0); "strength" means
     distance from it, so the analysis works for a two-sided coefficient sweep.
-    ``sweet_spot`` is the steered point with the largest coherent shift in effect
-    away from baseline; ``cliff_x`` is the coeff of the nearest-to-baseline point
+    ``sweet_spot`` is the coherent steered point whose effect shift off baseline
+    is most in the requested direction (effect-increasing by default; see
+    :func:`analyze_dose`); ``cliff_x`` is the coeff of the nearest-to-baseline point
     at which coherence breaks (the onset of collapse). Either may be ``None`` (no
     coherent steered point / never collapses). Floors are reported so the
     annotation is reproducible.
@@ -290,6 +295,7 @@ def analyze_dose(
     curve: list[SweepPoint],
     perplexity_tol: float = 0.5,
     repetition_cap: float = 0.5,
+    direction: SweetSpotDirection = "increase",
 ) -> DoseAnalysis:
     """Locate the sweet spot and the coherence cliff on a dose-response curve.
 
@@ -301,13 +307,22 @@ def analyze_dose(
     ``repetition_cap`` (since higher is worse). Both axes are checked because the
     cliff can appear in either.
 
-    * sweet spot — the coherent steered point with the largest shift in effect
-      away from baseline (the strongest behaviour change that stays fluent).
+    * sweet spot — the coherent steered point whose effect shift off baseline is
+      most in the requested ``direction``:
+
+      - ``"increase"`` (default) — largest **positive** shift (steer toward the
+        concept). This is the usual intent: on a near-symmetric curve the older
+        direction-agnostic rule could mark the effect-*decreasing* side.
+      - ``"decrease"`` — largest **negative** shift (steer away).
+      - ``"abs"`` — largest shift either way (the previous behaviour).
+
     * cliff — the coeff of the nearest-to-baseline steered point that is *not*
       coherent (the onset of collapse).
     """
     if not curve:
         raise ValueError("cannot analyse an empty dose-response curve")
+    if direction not in ("increase", "decrease", "abs"):
+        raise ValueError(f"unknown sweet-spot direction: {direction!r}")
 
     baseline = min(curve, key=lambda p: abs(p.x))
     perplexity_floor = baseline.perplexity.mean * (1.0 + perplexity_tol)
@@ -318,15 +333,21 @@ def analyze_dose(
     def strength(point: SweepPoint) -> float:
         return abs(point.x - baseline.x)
 
+    def shift(point: SweepPoint) -> float:
+        return point.effect.mean - baseline.effect.mean
+
     steered = [p for p in curve if p.x != baseline.x]
     coherent_steered = [p for p in steered if coherent(p)]
     incoherent_steered = [p for p in steered if not coherent(p)]
 
-    sweet_spot = (
-        max(coherent_steered, key=lambda p: abs(p.effect.mean - baseline.effect.mean))
-        if coherent_steered
-        else None
-    )
+    if not coherent_steered:
+        sweet_spot = None
+    elif direction == "decrease":
+        sweet_spot = min(coherent_steered, key=shift)
+    elif direction == "abs":
+        sweet_spot = max(coherent_steered, key=lambda p: abs(shift(p)))
+    else:  # "increase"
+        sweet_spot = max(coherent_steered, key=shift)
     cliff = min(incoherent_steered, key=strength, default=None)
 
     return DoseAnalysis(

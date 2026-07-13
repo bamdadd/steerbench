@@ -98,17 +98,14 @@ contrastive pairs; 3 seeds; A100 via Modal). Full run in
 [M0_REPORT.md](M0_REPORT.md).
 
 - **Dose sweet spot ≈ `alpha_norm` 0.044** (residual-fraction dose; raw coeff
-  ≈ 20): formality peaks with coherence still at baseline.
+  ≈ 20–25) — the effect-increasing side steerbench marks in the hero above:
+  formality peaks with coherence still at baseline.
 - **Coherence cliffs on both sides** — past coeff ≈ −40 and ≈ +60: repetition
   climbs (0.04 → 0.66) and perplexity spikes as the text degenerates.
 - **Layer plateau, peak at layer 17 (0.61 depth).** Measured at equal
   normalized strength across all 27 layers, so an early-layer cliff can't
   masquerade as a peak — the naive fixed-coefficient run flags layer 1 as a
   degenerate trap, which the deconfounded run corrects.
-
-The hero above marks the largest *coherent deflection*, which on this
-near-symmetric curve is the casual side (`alpha_norm ≈ −0.055`); the
-formality-increasing sweet spot is the `+0.044` above.
 
 Cross-model runs (Llama 3.x 8B, Gemma 2 9B) are in progress — whether
 steerability varies by architecture is the finding this chart aims at.
