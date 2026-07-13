@@ -52,7 +52,11 @@ import statistics
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from matplotlib.artist import Artist
+    from matplotlib.figure import Figure
 
 # How to pick the sweet spot from the effect shift off baseline.
 SweetSpotDirection = Literal["increase", "decrease", "abs"]
@@ -535,7 +539,7 @@ def plot_layer_sensitivity(data: ReportData) -> bytes:
 
     lines_effect, labels_effect = ax_effect.get_legend_handles_labels()
     # de-duplicate repeated trap labels
-    seen: dict[str, object] = {}
+    seen: dict[str, Artist] = {}
     for line, label in zip(lines_effect, labels_effect, strict=True):
         seen.setdefault(label, line)
     ax_effect.legend(list(seen.values()), list(seen.keys()), loc="best", fontsize=8)
@@ -544,14 +548,14 @@ def plot_layer_sensitivity(data: ReportData) -> bytes:
     return _figure_to_png(fig)
 
 
-def _figure_to_png(fig: object) -> bytes:
+def _figure_to_png(fig: Figure) -> bytes:
     """Serialise a matplotlib figure to PNG bytes and close it."""
     from io import BytesIO
 
     import matplotlib.pyplot as plt
 
     buf = BytesIO()
-    fig.savefig(buf, format="png", dpi=120)  # type: ignore[attr-defined]
+    fig.savefig(buf, format="png", dpi=120)
     plt.close(fig)
     return buf.getvalue()
 
