@@ -13,7 +13,7 @@ models:
 
 1. **Dose-response *shape* is architecture-specific.** **Qwen2.5-7B** has a true
    **interior optimum** — the effect peaks at a middling dose and then *reverses*
-   as you push past the coherence cliff. **Llama-3.x-8B** is
+   as you push past the coherence cliff. **Llama-3.1-8B** is
    **monotonic-to-cliff** — no interior turn; its best usable effect is the last
    dose before coherence breaks, and it needs **~3–4× the normalized dose** to get
    there. This is the defensible, non-obvious result.
@@ -46,7 +46,7 @@ proxies. We are pointing at phenomena, not estimating interaction terms.
 and the effect **reverses** as the text degenerates. There is a genuine best dose
 in the interior of the range.
 
-**Llama-3.x-8B — monotonic-to-cliff.** No interior turn. The effect climbs right
+**Llama-3.1-8B — monotonic-to-cliff.** No interior turn. The effect climbs right
 up to the coherence cliff, so the best usable dose is simply the **last coherent
 one** (`alpha_norm` ≈ 0.197). And that dose is high — **~3–4× Qwen's**: about
 **3.6×** Qwen's formality optimum (~0.055), and about **2.3×** Qwen's sentiment
@@ -95,6 +95,12 @@ direction agrees with itself — showed the formality direction is **unstable**:
   Same model, same data fraction, same recipe — sentiment holds, formality
   collapses. So it is not "small data broke everything"; Mistral's *formality*
   extraction fails specifically.
+- and it is not that **Mistral** is hard to extract from in general: **verbosity**
+  extracts stably on all three models (cosine Qwen **0.94**, Llama **0.92**,
+  Mistral **0.93**). So Mistral extracts *two* of the three concepts —
+  sentiment (0.95) and verbosity (0.93) — cleanly, and fails on formality alone.
+  The defect is concept-and-model-specific, exactly where a single flat curve
+  would leave you guessing.
 
 And it is a *different failure than data-hunger*, not just a worse degree of it —
 which matters, because we measured Mistral formality at the same data-starved 70%
@@ -146,10 +152,12 @@ An effect number without a coherence number beside it is not a result.
 
 ## Method, briefly
 
-repeng PCA-diff contrastive extraction (not reimplemented), exported to
-repeng-native gguf, reloaded and injected via `ControlModel`. 3 seeds per point;
-effect = concept proxy, coherence = repetition rate + perplexity under the
-unsteered model; dose reported as `alpha_norm`. Extraction stability = cosine
+Models: **Qwen2.5-7B**, **Llama-3.1-8B** (NousResearch mirror of Llama 3.1), and
+**Mistral-7B**. repeng PCA-diff contrastive extraction (not reimplemented),
+exported to repeng-native gguf, reloaded and injected via `ControlModel`. 3 seeds
+per point; effect = concept proxy, coherence = repetition rate + perplexity under
+the unsteered model; dose reported as `alpha_norm`. Extraction stability = cosine
 agreement of the injection-layer direction across independent re-extractions.
-Full Qwen M0 run and the per-model CSVs are in the repo; the cross-model sweep is
-ongoing.
+The cross-model sweep is **complete** — three concepts (formality, sentiment,
+verbosity) across all three models; the full Qwen M0 run and the per-model CSVs
+are in the repo.
