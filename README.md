@@ -112,18 +112,28 @@ unlike the proxy scale):
   normalized dose** than Qwen (≈ 3.6× vs Qwen formality at ~0.055; ≈ 2.3× vs
   Qwen sentiment at 0.087). A dose tuned on Qwen underdrives Llama.
 
+Both formality vectors behind this are **stable at adequate data** —
+injection-layer cosine across re-extractions **0.97 (Qwen)** and **0.83 (Llama)**
+at a 90% subsample of the 69 contrastive pairs — so the shape difference is a
+real architectural property, not extraction variance. Honest caveat: formality
+extraction is **data-hungry** — cosine falls to **0.55–0.64** at a 70% subsample
+— so vector stability itself depends on dataset size and should be measured, not
+assumed (another face of [vgel/repeng#78](https://github.com/vgel/repeng/issues/78)).
+
 **A cautionary case — the report card catches a bad vector.** On **Mistral-7B**,
 the formality dose-response came back **flat in both directions** (positive
 `alpha` never clears the 4.83 baseline; negative `alpha` barely moves it despite
 downward headroom). That *looks* like "this model won't take formality steering"
-— but a 3× re-extraction **stability check** showed why: the formality direction
-is **unstable** (injection-layer cosine ≈ **−0.13**, sign-flipping across
-re-extractions: −0.81, −0.29, +0.69), i.e. a low-SNR vector, not a model
-property. The **sentiment** vector on the *same model* is rock-stable
-(cosine ≈ **0.95**) and steers fine. Lesson: a flat curve can mean *bad vector*
-or *stubborn model*, and you cannot tell by eyeballing one generation — the
-report card plus a stability check distinguishes them. This is the repeng
-extraction-instability failure mode ([vgel/repeng#78](https://github.com/vgel/repeng/issues/78)).
+— but a re-extraction **stability check** showed why: the formality direction is
+**unstable** (injection-layer cosine ≈ **−0.13**, sign-flipping run to run:
+−0.81, −0.29, +0.69), a low-SNR vector, not a model property. Crucially, this is
+**not** just the data-hunger above: at the *same* 70% subsample the **sentiment**
+vector on the *same model* is rock-stable (cosine **0.95**) and steers fine — so
+Mistral's formality extraction fails *specifically*. Lesson: a flat curve can
+mean *bad vector* or *stubborn model*, and you cannot tell by eyeballing one
+generation — the report card plus a stability check distinguishes them. This is
+the repeng extraction-instability failure mode
+([vgel/repeng#78](https://github.com/vgel/repeng/issues/78)).
 
 **Coherence gates every peak.** We deliberately do *not* headline layer/depth
 patterns: Llama's formality peak sits at perplexity ≈ 5.0 (borderline), and
