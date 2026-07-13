@@ -91,7 +91,7 @@ The direction itself does not hold. Injection-layer cosine across re-extractions
 is about -0.13, and it sign-flips run to run: -0.81, -0.29, +0.69. A vector that
 points a different way each time you extract it is not measuring anything.
 
-It is also not just the data-hunger from the last section. At the same 70%
+Data-hunger does not explain this one either. At the same 70%
 subsample, the sentiment direction on the same model is rock-stable (cosine 0.95)
 and steers fine, +0.65 over its own sentiment baseline. Same model, same data
 fraction, same recipe, and sentiment holds where formality collapses. So this is
@@ -105,8 +105,8 @@ verbosity at 0.93, and misses only formality. The defect is specific to one
 concept on one model, which is exactly the case a single flat curve leaves you
 guessing about.
 
-The failure is also a different kind from data-hunger, not just a worse degree of
-it, and that distinction is what carries the argument. I measured Mistral
+This failure differs in kind from data-hunger, not in degree, and that
+distinction is what carries the argument. I measured Mistral
 formality at the same starved 70% where Qwen formality also dips, but the two
 dips are not the same animal. Qwen's 70% direction stays consistent and positive
 (0.64) and recovers to 0.97 on the full data: a weak but real signal short on
@@ -140,6 +140,27 @@ peak is milder but still worth flagging: it sits at a perplexity of about 5.0,
 which is borderline, so I flag it rather than celebrate it.
 
 An effect number with no coherence number next to it is not a result.
+
+## Side effects: capability falls off the same cliff
+
+Dose moves more than effect and coherence. I also scored two held-out capability
+slices, MMLU and GSM8K, steered against unsteered, 3 seeds, on an A100.
+
+At the sweet spot (`alpha_norm` 0.044) the capability cost is small. Qwen holds
+steady on MMLU, 0.57 to 0.61, and gives up some GSM8K, 0.54 to 0.47. Llama and
+Mistral stay roughly flat.
+
+Past the cliff (`alpha_norm` 0.284) the damage tracks each model's dose-response
+shape. Qwen, the model with the sharp cliff and interior optimum, loses
+everything: MMLU and GSM8K both fall to 0.00. Llama, tolerant and
+monotonic-to-cliff, degrades but survives, with MMLU at 0.58 to 0.36 and GSM8K at
+0.56 to 0.37. Mistral barely moves, MMLU 0.58 to 0.53 and GSM8K 0.38 to 0.33, for
+the same reason its formality curve was flat: this is the unstable noise vector
+from the cautionary case, and an inert vector cannot wreck capabilities any more
+than it can steer behaviour.
+
+So the coherence cliff is a capability cliff as well, and how hard it bites is
+specific to the architecture.
 
 ## What I am not claiming
 
