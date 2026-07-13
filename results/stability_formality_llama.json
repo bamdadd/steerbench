@@ -1,0 +1,20 @@
+{
+  "model": "NousResearch/Meta-Llama-3.1-8B-Instruct",
+  "inject_layer": 20,
+  "n_layers": 32,
+  "n_runs": 3,
+  "subsample": 0.7,
+  "concepts": {
+    "formality": {
+      "inject_cos_mean": 0.5514171911439149,
+      "inject_cos_min": 0.26826161119337777,
+      "inject_cos_pairs": [
+        0.8562,
+        0.2683,
+        0.5298
+      ],
+      "mean_layer_cos": 0.3378316646351833,
+      "n_pairs_data": 48
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "model": "Qwen/Qwen2.5-7B-Instruct",
+  "inject_layer": 17,
+  "n_layers": 28,
+  "n_runs": 3,
+  "subsample": 0.7,
+  "concepts": {
+    "verbosity": {
+      "inject_cos_mean": -0.3246870661343888,
+      "inject_cos_min": -0.9526880603409608,
+      "inject_cos_pairs": [
+        -0.9417,
+        0.9203,
+        -0.9527
+      ],
+      "mean_layer_cos": 0.7535736925433811,
+      "n_pairs_data": 48
+    }
+  }
+}

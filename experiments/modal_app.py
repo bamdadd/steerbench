@@ -729,19 +729,22 @@ def train_export() -> None:
 
 
 @app.local_entrypoint()
-def run_stability(model: str = "gemma", concepts: str = "formality,sentiment") -> None:
+def run_stability(model: str = "gemma", concepts: str = "formality,sentiment",
+                  subsample: float = 0.7) -> None:
     """Extraction-stability check: re-extract each concept's direction 3x from
     independent subsamples, report pairwise cosine at the inject layer. gemma ->
-    Mistral fallback. Writes results/stability_<concepts>_<model>.json."""
+    Mistral fallback. Writes results/stability_<concepts>_<model>[_ss<pct>].json."""
     import json
     import os
 
     model_id, model = _resolve_model(model)
     clist = [c.strip() for c in concepts.split(",")]
-    res = stability_check.remote(model_id=model_id, concepts=clist)
+    res = stability_check.remote(model_id=model_id, concepts=clist,
+                                 subsample=subsample)
     os.makedirs("results", exist_ok=True)
     slug = "_".join(clist)
-    with open(f"results/stability_{slug}_{model}.json", "w") as f:
+    suffix = "" if subsample == 0.7 else f"_ss{int(subsample * 100)}"
+    with open(f"results/stability_{slug}_{model}{suffix}.json", "w") as f:
         json.dump(res, f, indent=2)
     print(json.dumps(res, indent=2))
     print(f"\n{model_id}")
