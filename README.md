@@ -93,22 +93,59 @@ is **calibrated, not guessed**.
 
 ## Results
 
-**M0 — FORMALITY vector on Qwen2.5-7B-Instruct** (repeng PCA-diff over 69
-contrastive pairs; 3 seeds; A100 via Modal). Full run in
-[M0_REPORT.md](M0_REPORT.md).
+One extraction recipe (repeng PCA-diff, 3 seeds, A100 via Modal) run across
+models and concepts. Each (model, concept) cell is **n = 1 vector** with coarse
+behavioural proxies, so these are **existence** claims, not statistical
+interactions. Every effect is measured **within-concept against that cell's own
+baseline**; the formality and sentiment proxies are on different scales and are
+never compared to each other.
 
-- **Dose sweet spot ≈ `alpha_norm` 0.044** (residual-fraction dose; raw coeff
-  ≈ 20–25) — the effect-increasing side steerbench marks in the hero above:
-  formality peaks with coherence still at baseline.
-- **Coherence cliffs on both sides** — past coeff ≈ −40 and ≈ +60: repetition
-  climbs (0.04 → 0.66) and perplexity spikes as the text degenerates.
-- **Layer plateau, peak at layer 17 (0.61 depth).** Measured at equal
-  normalized strength across all 27 layers, so an early-layer cliff can't
-  masquerade as a peak — the naive fixed-coefficient run flags layer 1 as a
-  degenerate trap, which the deconfounded run corrects.
+**The finding: architectures differ in dose-response *shape*** — measured on the
+coherence-gated `alpha_norm` axis (the residual-fraction dose; model-independent,
+unlike the proxy scale):
 
-Cross-model runs (Llama 3.x 8B, Gemma 2 9B) are in progress — whether
-steerability varies by architecture is the finding this chart aims at.
+- **Qwen2.5-7B — interior optimum.** Formality effect rises with dose, peaks
+  around `alpha_norm` ≈ 0.04–0.055, then the coherence cliff takes over and the
+  effect *reverses* past it (the hero above).
+- **Llama-3.1-8B — monotonic-to-cliff.** No interior turn; the best usable effect
+  is the *last coherent dose* (`alpha_norm` ≈ 0.197). It needs a **~3–4× higher
+  normalized dose** than Qwen (≈ 3.6× vs Qwen formality at ~0.055; ≈ 2.3× vs
+  Qwen sentiment at 0.087). A dose tuned on Qwen underdrives Llama. (Llama-3.1-8B
+  = NousResearch mirror.)
+
+Both formality vectors behind this are **stable at adequate data** —
+injection-layer cosine across re-extractions **0.97 (Qwen)** and **0.83 (Llama)**
+at a 90% subsample of the 69 contrastive pairs — so the shape difference is a
+real architectural property, not extraction variance. Honest caveat: formality
+extraction is **data-hungry** — cosine falls to **0.55–0.64** at a 70% subsample
+— so vector stability itself depends on dataset size and should be measured, not
+assumed (another face of [vgel/repeng#78](https://github.com/vgel/repeng/issues/78)).
+
+**A cautionary case — the report card catches a bad vector.** On **Mistral-7B**,
+the formality dose-response came back **flat in both directions** (positive
+`alpha` never clears the 4.83 baseline; negative `alpha` barely moves it despite
+downward headroom). That *looks* like "this model won't take formality steering"
+— but a re-extraction **stability check** showed why: the formality direction is
+**unstable** (injection-layer cosine ≈ **−0.13**, sign-flipping run to run:
+−0.81, −0.29, +0.69), a low-SNR vector, not a model property. Crucially, this is
+**not** just the data-hunger above: at the *same* 70% subsample the **sentiment**
+vector on the *same model* is rock-stable (cosine **0.95**) and steers fine, and
+**verbosity** extracts stably too (cosine **0.93**). Mistral extracts two of the
+three concepts cleanly and fails on formality alone — so this is not "Mistral is
+hard to extract from," it is formality-*specific*. Lesson: a flat curve can
+mean *bad vector* or *stubborn model*, and you cannot tell by eyeballing one
+generation — the report card plus a stability check distinguishes them. This is
+the repeng extraction-instability failure mode
+([vgel/repeng#78](https://github.com/vgel/repeng/issues/78)).
+
+**Coherence gates every peak.** We deliberately do *not* headline layer/depth
+patterns: Llama's formality peak sits at perplexity ≈ 5.0 (borderline), and
+Mistral's apparent formality spike at layer 2 (effect 15.6) lands at perplexity
+≈ 8.5 — degenerate text the gate rejects rather than reports as a peak.
+
+Qwen M0 full run: [M0_REPORT.md](M0_REPORT.md). Cross-model sweep complete —
+three concepts (formality, sentiment, verbosity) across Qwen2.5-7B,
+Llama-3.1-8B, and Mistral-7B (Gemma 2 9B gated, substituted).
 
 ## Scope
 
