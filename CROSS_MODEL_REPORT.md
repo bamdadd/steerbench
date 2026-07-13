@@ -105,3 +105,61 @@ Artifacts: `artifacts/layer_sweep_{qwen,llama,mistral}.{csv,png}`.
 calibrated classifier); repeng PCA-diff directions; Gemma-2-9b-it deferred. The
 per-model sweet-spot dose is itself model-dependent (Qwen 0.044, Llama ~0.25),
 so the anchor transfers the *protocol*, not the optimal setting.
+
+---
+
+## Follow-up 1 — re-dosed layer sweep (each model at its OWN sweet-spot dose)
+
+The layer sweeps above used `alpha_norm=0.044` (Qwen's sweet spot), which
+UNDER-doses Llama (its dose-response peaks ~0.20) and Mistral. Re-run at each
+model's own dose makes the **layer** comparison valid:
+
+| Model | dose | coherent-peak layer (frac) | effect vs baseline |
+|:--|--:|:--|:--|
+| Qwen2.5-7B (ref, @0.044) | 0.044 | L17 (0.61) | 5.07 vs 4.46 (+0.6) |
+| **Llama-3.1-8B @0.197** | 0.197 | **L14 (0.44)** | 5.04 vs 4.34 (**+0.70**) |
+| **Mistral-7B @0.197** | 0.197 | L15 (0.47) | 4.99 vs 4.92 (**+0.07**) |
+
+Properly dosed, Llama shows a **real** receptive peak at L14 (0.44 depth) — and
+its best layer (0.44) is **shallower than Qwen's (0.61)**: the most-steerable
+depth is itself architecture-dependent. Mistral stays flat even at its own dose
+(+0.07), so its formality inertness is **not** an under-dosing artifact.
+Artifacts: `artifacts/layer_sweep_{llama,mistral}_redosed.{csv,png}`.
+
+---
+
+## Follow-up 2 — SECOND CONCEPT (sentiment): is inertness concept-specific?
+
+Trained a **sentiment** vector (positive vs negative contrastive personas) on all
+three, same dose grid at 0.61 depth. Effect = lexical sentiment proxy
+(pos−neg per token; small absolute magnitudes because neutral prompts elicit few
+sentiment words — read relatively).
+
+| Model | baseline | peak effect (dose) | steers sentiment? |
+|:--|--:|:--|:--|
+| **Qwen2.5-7B** | 0.47 | **4.71** (α=0.197), cliff at 0.284 | **yes, strongly** |
+| **Llama-3.1-8B** | 0.11 | 0.56 (α=0.197) | weakly |
+| **Mistral-7B** | 0.66 | ~1.3 noisy, no monotone | **no (inert/noisy)** |
+
+**Verdict on Mistral:** inert on **both** formality (+0.07) and sentiment (no
+clean response) → its resistance is **architectural, not concept-specific**.
+Qwen steers both concepts strongly (sentiment sweet spot ~0.15–0.20, higher than
+formality's 0.044 — dose is concept-dependent too). Llama steers both but weakly
+at low dose. Artifacts: `artifacts/{dose_response,layer_sweep}_sentiment_{qwen,llama,mistral}.{csv,png}`.
+
+### Steerability matrix (2 concepts × 3 architectures)
+
+| | formality | sentiment |
+|:--|:--|:--|
+| **Qwen2.5-7B** | strong (sweet 0.044, sharp cliff) | strong (sweet ~0.17) |
+| **Llama-3.1-8B** | moderate (needs ~0.20) | weak |
+| **Mistral-7B** | inert | inert |
+
+This strengthens the claim: **steerability is a property of the architecture (and
+partly the concept), not universal.** Qwen is broadly steerable, Llama
+under-responsive but works at higher dose, Mistral-7B-v0.3 resists diff-of-means
+steering for both concepts at this depth. (Caveats as above; plus: cheap sentiment
+proxy is noisy, single injection depth, one Mistral version — not proof Mistral is
+unsteerable in general, only for this method/site.)
+
+**3-concepts acceptance criterion:** formality ✓, sentiment ✓, verbosity pending.
