@@ -1,0 +1,31 @@
+{
+  "model": "mistralai/Mistral-7B-Instruct-v0.3",
+  "inject_layer": 20,
+  "n_layers": 32,
+  "n_runs": 3,
+  "subsample": 0.7,
+  "concepts": {
+    "formality": {
+      "inject_cos_mean": -0.13471705352575916,
+      "inject_cos_min": -0.8060729726749893,
+      "inject_cos_pairs": [
+        -0.8061,
+        -0.2869,
+        0.6888
+      ],
+      "mean_layer_cos": 0.3161092566657692,
+      "n_pairs_data": 48
+    },
+    "sentiment": {
+      "inject_cos_mean": 0.9498130080672595,
+      "inject_cos_min": 0.9413338890199087,
+      "inject_cos_pairs": [
+        0.9506,
+        0.9413,
+        0.9575
+      ],
+      "mean_layer_cos": 0.1994934518045061,
+      "n_pairs_data": 48
+    }
+  }
+}
