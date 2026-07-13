@@ -53,6 +53,25 @@ MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"
 MODEL_BASE = "Qwen/Qwen2.5-7B"
 GPU = "A100"
 
+# HF token for gated models (Llama, Gemma). Modal secret "huggingface".
+HF_SECRET = modal.Secret.from_name("huggingface")
+
+# Cross-model registry. inject_frac fixes the concept anchor at a constant
+# fraction-of-depth; the absolute layer + per-model resid_norm are MEASURED,
+# not assumed. sweet_alpha is the transferable dose (held constant across models).
+SWEET_ALPHA = 0.044
+INJECT_FRAC = 0.61
+MODELS = {
+    "qwen": "Qwen/Qwen2.5-7B-Instruct",
+    "llama": "meta-llama/Llama-3.1-8B-Instruct",
+    "gemma": "google/gemma-2-9b-it",
+}
+
+
+def _inject_layer(n_layers: int, frac: float = INJECT_FRAC) -> int:
+    """Absolute layer index closest to `frac` of depth (1..n_layers-1)."""
+    return max(1, min(n_layers - 1, round(frac * n_layers)))
+
 
 def _gguf_path(model_id: str) -> str:
     slug = model_id.split("/")[-1].replace(".", "_")
@@ -88,29 +107,37 @@ _SEED_TEXT = (
 )
 
 
-def build_dataset(chat: bool = True):
-    """Formal/casual contrastive pairs. chat=True wraps in Qwen chat scaffold
-    (instruct); chat=False uses plain completion text (base model)."""
+def build_dataset(tok=None):
+    """Formal/casual contrastive pairs.
+
+    If `tok` has a chat template (instruct models) each side is wrapped in THAT
+    model's own chat scaffold via apply_chat_template — correct for Qwen, Llama,
+    Gemma alike (not a hardcoded Qwen scaffold). Base models (no template) get
+    plain completion text. repeng reads the last-token hidden state, so we append
+    a shared truncated suffix; the pair differs ONLY in the persona instruction.
+    """
     from repeng import DatasetEntry
 
     words = _SEED_TEXT.split()
-    # truncated suffixes: 1..N words, capped to keep pair count sane
     suffixes = [" ".join(words[:i]) for i in range(1, min(len(words), 24))]
     persona_msg = "Act as if you are {persona}. Write a short message."
-    plain_tmpl = "{msg} {suffix}"
+    has_chat = tok is not None and bool(getattr(tok, "chat_template", None))
+
+    def scaffold(persona: str) -> str:
+        msg = persona_msg.format(persona=persona)
+        if has_chat:
+            return tok.apply_chat_template(
+                [{"role": "user", "content": msg}],
+                tokenize=False, add_generation_prompt=True)
+        return msg + " "
 
     dataset: list[DatasetEntry] = []
     for suffix in suffixes:
         for pos, neg in zip(_POS_PERSONAS, _NEG_PERSONAS):
-            tmpl = _QWEN_TMPL if chat else plain_tmpl
             dataset.append(
                 DatasetEntry(
-                    positive=tmpl.format(
-                        msg=persona_msg.format(persona=pos), suffix=suffix
-                    ),
-                    negative=tmpl.format(
-                        msg=persona_msg.format(persona=neg), suffix=suffix
-                    ),
+                    positive=scaffold(pos) + suffix,
+                    negative=scaffold(neg) + suffix,
                 )
             )
     return dataset
@@ -243,7 +270,7 @@ def _ppl_unsteered(cmodel, tok, text: str) -> float:
 # ---------------------------------------------------------------------------
 
 
-@app.function(gpu=GPU, timeout=1800, volumes={VOL: vol})
+@app.function(gpu=GPU, timeout=1800, volumes={VOL: vol}, secrets=[HF_SECRET])
 def introspect() -> str:
     import inspect
 
@@ -267,7 +294,7 @@ def introspect() -> str:
 # ---------------------------------------------------------------------------
 
 
-@app.function(gpu=GPU, timeout=3600, volumes={VOL: vol})
+@app.function(gpu=GPU, timeout=3600, volumes={VOL: vol}, secrets=[HF_SECRET])
 def train_and_export(model_id: str = MODEL_ID, gguf_path: str | None = None) -> dict:
     import numpy as np
     from repeng import ControlVector
@@ -281,7 +308,7 @@ def train_and_export(model_id: str = MODEL_ID, gguf_path: str | None = None) -> 
     wrapped = ControlModel(model, list(range(-1, -n_layers, -1)))
 
     chat = bool(getattr(tok, "chat_template", None))
-    dataset = build_dataset(chat=chat)
+    dataset = build_dataset(tok)
     print(f"model {model_id}  chat={chat}  pairs {len(dataset)}  n_layers {n_layers}")
 
     vec = ControlVector.train(wrapped, tok, dataset, batch_size=16)
@@ -310,7 +337,7 @@ def train_and_export(model_id: str = MODEL_ID, gguf_path: str | None = None) -> 
 # ---------------------------------------------------------------------------
 
 
-@app.function(gpu=GPU, timeout=1800, volumes={VOL: vol})
+@app.function(gpu=GPU, timeout=1800, volumes={VOL: vol}, secrets=[HF_SECRET])
 def smoke(layer: int = 14, big_coeff: float = 8.0) -> dict:
     import sys
 
@@ -351,14 +378,19 @@ def smoke(layer: int = 14, big_coeff: float = 8.0) -> dict:
 # ---------------------------------------------------------------------------
 
 
-@app.function(gpu=GPU, timeout=5400, volumes={VOL: vol})
+@app.function(gpu=GPU, timeout=5400, volumes={VOL: vol}, secrets=[HF_SECRET])
 def dose_response(
     layer: int,
-    coeffs: list[float],
     seeds: list[int],
+    coeffs: list[float] | None = None,
+    alphas: list[float] | None = None,
     model_id: str = MODEL_ID,
     gguf_path: str | None = None,
 ) -> dict:
+    """Dose-response at a fixed layer. Provide EITHER absolute `coeffs` OR
+    `alphas` (dimensionless dose); alphas convert to per-model coeffs via the
+    MEASURED residual norm, so the same dose grid is comparable across models."""
+    assert (coeffs is None) != (alphas is None), "give exactly one of coeffs/alphas"
     import sys
     import time
 
@@ -378,6 +410,8 @@ def dose_response(
 
     # measure residual-stream norm at this layer (baseline) for alpha normalization
     resid_norm = _resid_norm_at_layer(model, tok, layer)
+    if alphas is not None:
+        coeffs = [a * resid_norm / dnorm for a in alphas]  # dose -> raw coeff
 
     prompt_ids = [_prompt_ids(tok, p) for p in _EVAL_PROMPTS]
 
@@ -438,12 +472,14 @@ def _resid_norm_at_layer(model, tok, layer: int) -> float:
 # ---------------------------------------------------------------------------
 
 
-@app.function(gpu=GPU, timeout=7200, volumes={VOL: vol})
+@app.function(gpu=GPU, timeout=7200, volumes={VOL: vol}, secrets=[HF_SECRET])
 def layer_sweep(
     seeds: list[int],
     layers: list[int],
     coeff: float | None = None,
     target_alpha: float | None = None,
+    model_id: str = MODEL_ID,
+    gguf_path: str | None = None,
 ) -> dict:
     """Inject each layer's OWN direction at that layer.
 
@@ -463,8 +499,8 @@ def layer_sweep(
 
     import numpy as np
 
-    vec = load_vector(GGUF_PATH)
-    model, tok = _load_model_and_tokenizer()
+    vec = load_vector(gguf_path or GGUF_PATH)
+    model, tok = _load_model_and_tokenizer(model_id)
     from repeng import ControlModel
 
     n_layers = model.config.num_hidden_layers
@@ -539,6 +575,31 @@ def train_export() -> None:
 
     meta = train_and_export.remote()
     print(json.dumps(meta, indent=2))
+
+
+@app.function(timeout=600, volumes={VOL: vol}, secrets=[HF_SECRET])  # CPU only
+def gate_check() -> dict:
+    """Confirm the HF token can pull gated Llama + Gemma configs/tokenizers
+    (small download) before spending A100 minutes on the full model."""
+    import os
+
+    os.environ["HF_HOME"] = HF_CACHE
+    from transformers import AutoConfig, AutoTokenizer
+
+    out = {}
+    for key, mid in MODELS.items():
+        try:
+            cfg = AutoConfig.from_pretrained(mid)
+            AutoTokenizer.from_pretrained(mid)
+            out[key] = {"ok": True, "n_layers": cfg.num_hidden_layers,
+                        "hidden": cfg.hidden_size,
+                        "inject_layer": _inject_layer(cfg.num_hidden_layers)}
+        except Exception as e:  # noqa: BLE001
+            out[key] = {"ok": False, "error": f"{type(e).__name__}: {e}"[:200]}
+    vol.commit()
+    for k, v in out.items():
+        print(f"{k}: {v}")
+    return out
 
 
 @app.function(timeout=600, volumes={VOL: vol})  # CPU only
@@ -768,3 +829,179 @@ def run_layer_sweep(target_alpha: float = 0.044, coeff: float = 0.0) -> None:
               f"{a['alpha_norm'][0]:>7.3f} "
               f"{a['formality'][0]:>8.2f}±{a['formality'][1]:<5.2f} "
               f"{a['repetition'][0]:>8.3f} {a['ppl'][0]:>8.2f}{mark}")
+
+
+# ---------------------------------------------------------------------------
+# Cross-model comparison (Llama-3.1-8B-Instruct, Gemma-2-9b-it vs Qwen).
+# Anchor: inject at INJECT_FRAC of depth, dose held fixed at SWEET_ALPHA.
+# ---------------------------------------------------------------------------
+
+# Dose grid in transferable ALPHA units (Qwen's coeff grid / its resid_norm).
+# Includes 0, negatives, the SWEET_ALPHA anchor, and past-cliff values.
+ALPHA_GRID = [-0.20, -0.131, -0.087, -0.055, -0.033, 0.0,
+              0.033, SWEET_ALPHA, 0.055, 0.087, 0.131, 0.197, 0.284]
+
+
+def _dose_artifacts(res, model_id, layer, stem):
+    import csv
+    import os
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    rows = res["rows"]
+    frac = layer / res["n_layers"]
+    os.makedirs("results", exist_ok=True)
+    with open(f"results/{stem}.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["coeff", "seed", "alpha_norm",
+                                          "formality", "repetition", "ppl"])
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r[k] for k in w.fieldnames})
+
+    agg = _agg(rows, "coeff", ("formality", "repetition", "ppl", "alpha_norm"))
+    cs = sorted(agg)
+    xs = [agg[c]["alpha_norm"][0] for c in cs]  # x-axis in transferable dose
+    form_m = [agg[c]["formality"][0] for c in cs]
+    form_s = [agg[c]["formality"][1] for c in cs]
+    rep_m = [agg[c]["repetition"][0] for c in cs]
+    ppl_m = [agg[c]["ppl"][0] for c in cs]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
+    ax1.errorbar(xs, form_m, yerr=form_s, marker="o", capsize=3, color="C0")
+    ax1.axvline(0, color="gray", ls=":", lw=1)
+    ax1.axvline(SWEET_ALPHA, color="C1", ls="--", lw=1, label=f"anchor α={SWEET_ALPHA}")
+    ax1.set_xlabel("alpha_norm (dimensionless dose)")
+    ax1.set_ylabel("formality proxy (higher = more formal)")
+    ax1.set_title(f"EFFECT — dose-response @ layer {layer} ({frac:.2f} depth)")
+    ax1.legend(loc="best")
+    ax1.grid(alpha=0.3)
+
+    ax2.plot(xs, rep_m, marker="s", color="C3", label="repetition")
+    ax2.set_xlabel("alpha_norm (dimensionless dose)")
+    ax2.set_ylabel("repetition rate", color="C3")
+    ax2.axvline(0, color="gray", ls=":", lw=1)
+    ax2b = ax2.twinx()
+    ax2b.plot(xs, ppl_m, marker="^", color="C2")
+    ax2b.set_ylabel("perplexity (unsteered)", color="C2")
+    ax2.set_title("COHERENCE — the cliff")
+    ax2.grid(alpha=0.3)
+    fig.suptitle(
+        f"steerbench dose-response · {model_id.split('/')[-1]} · A100 · 3 seeds · "
+        f"layer {layer}/{res['n_layers']} ({frac:.2f}) · "
+        f"resid_norm={res['resid_norm']:.1f} · wall {res['wall_s']:.0f}s")
+    fig.tight_layout()
+    fig.savefig(f"results/{stem}.png", dpi=130)
+    print(f"wrote results/{stem}.{{csv,png}}")
+
+
+def _layer_artifacts(res, model_id, stem, tag):
+    import csv
+    import os
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    rows = res["rows"]
+    n_layers = res["n_layers"]
+    os.makedirs("results", exist_ok=True)
+    fields = ["layer", "layer_pos", "seed", "dir_norm", "resid_norm", "coeff",
+              "alpha_norm", "formality", "repetition", "ppl"]
+    with open(f"results/{stem}.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r[k] for k in fields})
+
+    agg = _agg(rows, "layer", ("formality", "repetition", "ppl", "coeff"))
+    ls = sorted(agg)
+    form_m = [agg[layer]["formality"][0] for layer in ls]
+    form_s = [agg[layer]["formality"][1] for layer in ls]
+    rep_m = [agg[layer]["repetition"][0] for layer in ls]
+
+    fig, ax1 = plt.subplots(figsize=(11, 5))
+    ax1.errorbar(ls, form_m, yerr=form_s, marker="o", capsize=3, color="C0",
+                 label="formality")
+    ax1.axhline(res["base_formality"], color="gray", ls="--", lw=1,
+                label="baseline")
+    ax1.axvline(_inject_layer(n_layers), color="C1", ls=":", lw=1,
+                label=f"{INJECT_FRAC} depth anchor")
+    ax1.set_xlabel("layer index (absolute)")
+    ax1.set_ylabel("formality proxy", color="C0")
+    ax1b = ax1.twinx()
+    ax1b.plot(ls, rep_m, marker="s", color="C3", alpha=0.6)
+    ax1b.set_ylabel("repetition rate", color="C3")
+    ax1.set_title(
+        f"steerbench layer sweep · {model_id.split('/')[-1]} · A100 · {tag} · "
+        f"3 seeds · own-direction-per-layer · wall {res['wall_s']:.0f}s")
+    ax1.grid(alpha=0.3)
+    ax1.secondary_xaxis(
+        "top", functions=(lambda x: x / n_layers, lambda x: x * n_layers)
+    ).set_xlabel("fraction of depth")
+    ax1.legend(loc="upper left")
+    fig.tight_layout()
+    fig.savefig(f"results/{stem}.png", dpi=130)
+    print(f"wrote results/{stem}.{{csv,png}}")
+
+    coherent = [layer for layer in ls
+                if agg[layer]["repetition"][0] < 0.15 and agg[layer]["ppl"][0] < 6]
+    best = max(coherent or ls, key=lambda layer: agg[layer]["formality"][0])
+    return {"peak_layer": best, "peak_frac": best / n_layers,
+            "peak_formality": agg[best]["formality"][0],
+            "baseline": res["base_formality"]}
+
+
+@app.local_entrypoint()
+def run_cross(model: str = "llama", skip_train: bool = False) -> None:
+    """Full cross-model run for one model key: train -> dose (alpha grid at
+    INJECT_FRAC depth) -> normalized layer sweep. Emits per-model artifacts."""
+    import json
+
+    assert model in MODELS, f"model must be one of {list(MODELS)}"
+    model_id = MODELS[model]
+    gguf = _gguf_path(model_id)
+    seeds = [0, 1, 2]
+
+    if not skip_train:
+        meta = train_and_export.remote(model_id=model_id, gguf_path=gguf)
+        n_layers = meta["n_layers"]
+        print(f"trained {model_id}: {json.dumps({k: meta[k] for k in ('n_layers', 'hidden_size', 'n_pairs')})}")
+    else:
+        n_layers = {"qwen": 28, "llama": 32, "gemma": 42}[model]
+
+    layer = _inject_layer(n_layers)
+    print(f"{model}: n_layers={n_layers}  inject layer={layer} "
+          f"(frac {layer / n_layers:.3f}, target {INJECT_FRAC})")
+
+    # dose-response at the anchored layer, alpha grid (past-cliff both ways)
+    dres = dose_response.remote(
+        layer=layer, seeds=seeds, alphas=ALPHA_GRID,
+        model_id=model_id, gguf_path=gguf)
+    _dose_artifacts(dres, model_id, layer, f"dose_response_{model}")
+
+    # normalized layer sweep, each layer's own direction at fixed dose
+    sres = layer_sweep.remote(
+        seeds=seeds, layers=list(range(1, n_layers)), target_alpha=SWEET_ALPHA,
+        model_id=model_id, gguf_path=gguf)
+    peak = _layer_artifacts(sres, model_id, f"layer_sweep_{model}",
+                            f"alpha_norm={SWEET_ALPHA}")
+
+    dagg = _agg(dres["rows"], "coeff", ("formality", "alpha_norm", "repetition"))
+    print(f"\n===== {model_id} =====")
+    print(f"n_layers={n_layers}  inject L{layer} (frac {layer / n_layers:.3f})  "
+          f"resid_norm@L={dres['resid_norm']:.1f}  "
+          f"coeff@α{SWEET_ALPHA}={SWEET_ALPHA * dres['resid_norm']:.1f}")
+    print(f"dose wall {dres['wall_s']:.0f}s  sweep wall {sres['wall_s']:.0f}s")
+    print(f"layer-sweep coherent peak: L{peak['peak_layer']} "
+          f"(frac {peak['peak_frac']:.2f})  formality {peak['peak_formality']:.2f} "
+          f"vs baseline {peak['baseline']:.2f}")
+    print(f"{'alpha':>8} {'formality':>16} {'repeat':>8}")
+    for c in sorted(dagg):
+        a = dagg[c]
+        print(f"{a['alpha_norm'][0]:>8.3f} "
+              f"{a['formality'][0]:>8.2f}±{a['formality'][1]:<5.2f} "
+              f"{a['repetition'][0]:>8.3f}")
