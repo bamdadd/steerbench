@@ -63,9 +63,13 @@ SWEET_ALPHA = 0.044
 INJECT_FRAC = 0.61
 MODELS = {
     "qwen": "Qwen/Qwen2.5-7B-Instruct",
-    "llama": "meta-llama/Llama-3.1-8B-Instruct",
+    # ungated mirror of Llama-3.1-8B-Instruct (identical weights)
+    "llama": "NousResearch/Meta-Llama-3.1-8B-Instruct",
     "gemma": "google/gemma-2-9b-it",
 }
+# If gemma-2-9b-it is gated (license not accepted), fall back to this ungated
+# instruct model for the 3rd architecture. Report notes "Gemma deferred".
+GEMMA_FALLBACK = "mistralai/Mistral-7B-Instruct-v0.3"
 
 
 def _inject_layer(n_layers: int, frac: float = INJECT_FRAC) -> int:
@@ -577,6 +581,34 @@ def train_export() -> None:
     print(json.dumps(meta, indent=2))
 
 
+@app.function(timeout=600, volumes={VOL: vol})  # CPU only
+def export_example() -> dict:
+    """Emit the M0 Qwen formality vector as compact example assets (gguf + pt)
+    into the Volume for local download. Agent 3's Colab loads a real vector."""
+    import sys
+
+    sys.path.insert(0, "/root/src")
+    import torch
+
+    from steerbench.vectors import load_vector, save_vector
+
+    vec = load_vector(GGUF_PATH)  # SteeringVector from the M0 training run
+    out_gguf = f"{VOL}/examples/formality_qwen2.5-7b.gguf"
+    out_pt = f"{VOL}/examples/formality_qwen2.5-7b.pt"
+    import os
+
+    os.makedirs(f"{VOL}/examples", exist_ok=True)
+    save_vector(vec, out_gguf)  # repeng-compatible gguf superset
+    # plain dict[layer -> float32 tensor] for the .pt fallback path
+    torch.save({int(k): v.to(torch.float32).cpu() for k, v in vec.directions.items()},
+               out_pt)
+    vol.commit()
+    sizes = {p: os.path.getsize(p) for p in (out_gguf, out_pt)}
+    print(f"layers {len(vec.directions)}  sizes {sizes}")
+    return {"gguf": out_gguf, "pt": out_pt, "n_layers": len(vec.directions),
+            "sizes": sizes}
+
+
 @app.function(timeout=600, volumes={VOL: vol}, secrets=[HF_SECRET])  # CPU only
 def gate_check() -> dict:
     """Confirm the HF token can pull gated Llama + Gemma configs/tokenizers
@@ -963,6 +995,16 @@ def run_cross(model: str = "llama", skip_train: bool = False) -> None:
 
     assert model in MODELS, f"model must be one of {list(MODELS)}"
     model_id = MODELS[model]
+
+    # Gemma is gated: probe access, auto-fall back to an ungated model.
+    if model == "gemma":
+        access = gate_check.remote().get("gemma", {}).get("ok", False)
+        if not access:
+            model_id = GEMMA_FALLBACK
+            model = model_id.split("/")[-1].split("-")[0].lower()  # "mistral"
+            print(f"gemma-2-9b-it gated -> falling back to {model_id} "
+                  f"(report: Gemma deferred pending license)")
+
     gguf = _gguf_path(model_id)
     seeds = [0, 1, 2]
 
