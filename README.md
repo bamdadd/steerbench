@@ -95,37 +95,40 @@ is **calibrated, not guessed**.
 
 One extraction recipe (repeng PCA-diff, 3 seeds, A100 via Modal) run across
 models and concepts. Each (model, concept) cell is **n = 1 vector** with coarse
-behavioural proxies, so these are **existence / dissociation** claims — *not*
-statistical interactions. Every effect is measured **within-concept against that
-cell's own baseline**; the formality and sentiment proxies live on different
-scales and are never compared to each other.
+behavioural proxies, so these are **existence** claims, not statistical
+interactions. Every effect is measured **within-concept against that cell's own
+baseline**; the formality and sentiment proxies are on different scales and are
+never compared to each other.
 
-**1. Steerability is not a single per-model scalar.** The same model, same
-extraction, can be readily steerable for one concept and near-inert for another.
-Cleanest instance — **Mistral-7B**: sentiment steers well (**+0.65** over its own
-sentiment baseline), while formality is **flat in both directions** — positive
-`alpha` never lifts formality above the 4.83 baseline, and negative `alpha`
-barely moves it *despite* large downward headroom. Two-sided flatness rules out a
-ceiling artifact. *Open confound:* we have not yet ruled out that Mistral's
-formality **direction** is a low-SNR extraction rather than a model property — a
-stability check is running, and the public write-up waits on its result.
+**The finding: architectures differ in dose-response *shape*** — measured on the
+coherence-gated `alpha_norm` axis (the residual-fraction dose; model-independent,
+unlike the proxy scale):
 
-**2. Architectures differ in dose-response shape** (measured in `alpha_norm`,
-the residual-fraction dose — model-independent, unlike the proxy scale):
+- **Qwen2.5-7B — interior optimum.** Formality effect rises with dose, peaks
+  around `alpha_norm` ≈ 0.04–0.055, then the coherence cliff takes over and the
+  effect *reverses* past it (the hero above).
+- **Llama-3.x-8B — monotonic-to-cliff.** No interior turn; the best usable effect
+  is the *last coherent dose* (`alpha_norm` ≈ 0.197). It needs a **~3–4× higher
+  normalized dose** than Qwen (≈ 3.6× vs Qwen formality at ~0.055; ≈ 2.3× vs
+  Qwen sentiment at 0.087). A dose tuned on Qwen underdrives Llama.
 
-- **Qwen2.5-7B — interior optimum.** Formality peaks around `alpha_norm` ≈
-  0.04–0.055, then the coherence cliff takes over and the effect *reverses* past
-  it (the hero above).
-- **Llama-3.x-8B — monotonic-to-cliff.** No interior turn; the best effect is the
-  *last coherent dose* (`alpha_norm` ≈ 0.197). It needs a **~3–4× higher
-  normalized dose** than Qwen's formality optimum (≈ 3.6× vs Qwen formality at
-  ~0.055; ≈ 2.3× vs Qwen sentiment at 0.087).
+**A cautionary case — the report card catches a bad vector.** On **Mistral-7B**,
+the formality dose-response came back **flat in both directions** (positive
+`alpha` never clears the 4.83 baseline; negative `alpha` barely moves it despite
+downward headroom). That *looks* like "this model won't take formality steering"
+— but a 3× re-extraction **stability check** showed why: the formality direction
+is **unstable** (injection-layer cosine ≈ **−0.13**, sign-flipping across
+re-extractions: −0.81, −0.29, +0.69), i.e. a low-SNR vector, not a model
+property. The **sentiment** vector on the *same model* is rock-stable
+(cosine ≈ **0.95**) and steers fine. Lesson: a flat curve can mean *bad vector*
+or *stubborn model*, and you cannot tell by eyeballing one generation — the
+report card plus a stability check distinguishes them. This is the repeng
+extraction-instability failure mode ([vgel/repeng#78](https://github.com/vgel/repeng/issues/78)).
 
 **Coherence gates every peak.** We deliberately do *not* headline layer/depth
 patterns: Llama's formality peak sits at perplexity ≈ 5.0 (borderline), and
 Mistral's apparent formality spike at layer 2 (effect 15.6) lands at perplexity
-≈ 8.5 — degenerate text the gate rejects rather than reports as a peak. The gate
-working is the result there.
+≈ 8.5 — degenerate text the gate rejects rather than reports as a peak.
 
 Qwen M0 full run: [M0_REPORT.md](M0_REPORT.md). Cross-model runs ongoing on
 Llama-3.x-8B and Mistral-7B (Gemma 2 9B gated, substituted).
