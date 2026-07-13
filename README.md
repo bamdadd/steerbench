@@ -93,22 +93,42 @@ is **calibrated, not guessed**.
 
 ## Results
 
-**M0 — FORMALITY vector on Qwen2.5-7B-Instruct** (repeng PCA-diff over 69
-contrastive pairs; 3 seeds; A100 via Modal). Full run in
-[M0_REPORT.md](M0_REPORT.md).
+One extraction recipe (repeng PCA-diff, 3 seeds, A100 via Modal) run across
+models and concepts. Each (model, concept) cell is **n = 1 vector** with coarse
+behavioural proxies, so these are **existence / dissociation** claims — *not*
+statistical interactions. Every effect is measured **within-concept against that
+cell's own baseline**; the formality and sentiment proxies live on different
+scales and are never compared to each other.
 
-- **Dose sweet spot ≈ `alpha_norm` 0.044** (residual-fraction dose; raw coeff
-  ≈ 20–25) — the effect-increasing side steerbench marks in the hero above:
-  formality peaks with coherence still at baseline.
-- **Coherence cliffs on both sides** — past coeff ≈ −40 and ≈ +60: repetition
-  climbs (0.04 → 0.66) and perplexity spikes as the text degenerates.
-- **Layer plateau, peak at layer 17 (0.61 depth).** Measured at equal
-  normalized strength across all 27 layers, so an early-layer cliff can't
-  masquerade as a peak — the naive fixed-coefficient run flags layer 1 as a
-  degenerate trap, which the deconfounded run corrects.
+**1. Steerability is not a single per-model scalar.** The same model, same
+extraction, can be readily steerable for one concept and near-inert for another.
+Cleanest instance — **Mistral-7B**: sentiment steers well (**+0.65** over its own
+sentiment baseline), while formality is **flat in both directions** — positive
+`alpha` never lifts formality above the 4.83 baseline, and negative `alpha`
+barely moves it *despite* large downward headroom. Two-sided flatness rules out a
+ceiling artifact. *Open confound:* we have not yet ruled out that Mistral's
+formality **direction** is a low-SNR extraction rather than a model property — a
+stability check is running, and the public write-up waits on its result.
 
-Cross-model runs (Llama 3.x 8B, Gemma 2 9B) are in progress — whether
-steerability varies by architecture is the finding this chart aims at.
+**2. Architectures differ in dose-response shape** (measured in `alpha_norm`,
+the residual-fraction dose — model-independent, unlike the proxy scale):
+
+- **Qwen2.5-7B — interior optimum.** Formality peaks around `alpha_norm` ≈
+  0.04–0.055, then the coherence cliff takes over and the effect *reverses* past
+  it (the hero above).
+- **Llama-3.x-8B — monotonic-to-cliff.** No interior turn; the best effect is the
+  *last coherent dose* (`alpha_norm` ≈ 0.197). It needs a **~3–4× higher
+  normalized dose** than Qwen's formality optimum (≈ 3.6× vs Qwen formality at
+  ~0.055; ≈ 2.3× vs Qwen sentiment at 0.087).
+
+**Coherence gates every peak.** We deliberately do *not* headline layer/depth
+patterns: Llama's formality peak sits at perplexity ≈ 5.0 (borderline), and
+Mistral's apparent formality spike at layer 2 (effect 15.6) lands at perplexity
+≈ 8.5 — degenerate text the gate rejects rather than reports as a peak. The gate
+working is the result there.
+
+Qwen M0 full run: [M0_REPORT.md](M0_REPORT.md). Cross-model runs ongoing on
+Llama-3.x-8B and Mistral-7B (Gemma 2 9B gated, substituted).
 
 ## Scope
 
