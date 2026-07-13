@@ -136,22 +136,36 @@ def test_analyze_finds_sweet_spot_and_cliff(data: ReportData) -> None:
     assert analysis.baseline.x == 0.0  # coeff nearest 0, not the min coeff
     # baseline ppl 10.0, floor = *1.5 = 15.0; coeff 40 (ppl ~42) breaks it
     assert analysis.cliff_x == 40.0
-    # largest coherent effect shift from baseline -> coeff 20 (|8.0-4.5|=3.5)
+    # default direction="increase": largest positive effect shift -> coeff 20
     assert analysis.sweet_spot is not None
     assert analysis.sweet_spot.x == 20.0
 
 
-def test_analyze_baseline_is_nearest_zero_not_min() -> None:
-    def pt(x: float, eff: float, ppl: float) -> SweepPoint:
-        return SweepPoint(x, MetricStat(eff, 0.0), MetricStat(ppl, 0.0), MetricStat(0.05, 0.0), 1)
+def _pt(x: float, eff: float, ppl: float) -> SweepPoint:
+    return SweepPoint(x, MetricStat(eff, 0.0), MetricStat(ppl, 0.0), MetricStat(0.05, 0.0), 1)
 
+
+def test_analyze_baseline_is_nearest_zero_not_min() -> None:
     # all coherent, two-sided: baseline must be coeff 0 despite -30 being smallest
-    curve = [pt(-30.0, 1.0, 10.5), pt(0.0, 4.0, 10.0), pt(30.0, 7.0, 11.0)]
+    curve = [_pt(-30.0, 1.0, 10.5), _pt(0.0, 4.0, 10.0), _pt(30.0, 7.0, 11.0)]
     analysis = analyze_dose(curve)
     assert analysis.baseline.x == 0.0
     assert analysis.cliff_x is None
-    assert analysis.sweet_spot is not None  # coeff 30: |7-4|=3 > coeff -30: |1-4|=3 tie->first max
-    assert analysis.sweet_spot.x in (30.0, -30.0)
+    # increase (default) -> the effect-raising side, coeff +30
+    assert analysis.sweet_spot is not None
+    assert analysis.sweet_spot.x == 30.0
+
+
+def test_analyze_direction_flips_sweet_spot() -> None:
+    # Two-sided, both sides coherent. Negative side deflects effect further
+    # (|1-4|=3) than the positive side (|6-4|=2), so "abs" picks -20 while
+    # "increase" must pick the effect-raising side (+20).
+    curve = [_pt(-20.0, 1.0, 10.2), _pt(0.0, 4.0, 10.0), _pt(20.0, 6.0, 10.4)]
+    assert analyze_dose(curve, direction="increase").sweet_spot.x == 20.0  # type: ignore[union-attr]
+    assert analyze_dose(curve, direction="decrease").sweet_spot.x == -20.0  # type: ignore[union-attr]
+    assert analyze_dose(curve, direction="abs").sweet_spot.x == -20.0  # type: ignore[union-attr]
+    with pytest.raises(ValueError, match="direction"):
+        analyze_dose(curve, direction="sideways")  # type: ignore[arg-type]
 
 
 def test_analyze_empty_raises() -> None:
