@@ -1,0 +1,20 @@
+{
+  "model": "mistralai/Mistral-7B-Instruct-v0.3",
+  "inject_layer": 20,
+  "n_layers": 32,
+  "n_runs": 3,
+  "subsample": 0.7,
+  "concepts": {
+    "verbosity": {
+      "inject_cos_mean": 0.9256060434622152,
+      "inject_cos_min": 0.9053047773492969,
+      "inject_cos_pairs": [
+        0.9653,
+        0.9053,
+        0.9062
+      ],
+      "mean_layer_cos": 0.8075831299823104,
+      "n_pairs_data": 48
+    }
+  }
+}
