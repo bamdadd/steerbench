@@ -210,3 +210,64 @@ Artifact: `artifacts/stability_mistral.json`.
 The headline stands — steerability varies by architecture and concept — but the
 Mistral formality cell is now correctly attributed to **extraction failure**, not
 resistance. Worth a stability panel on every steerbench report card.
+
+---
+
+## Follow-up 4 — 3rd concept (VERBOSITY) + full stability panel
+
+Closes the 3-concept acceptance criterion. Verbosity = verbose vs terse
+contrastive personas; effect proxy = word-count of the continuation (terse
+steering makes the model stop early, verbose fills the token cap → the verbose
+side ceilings, so the terse side carries most of the dynamic range).
+
+### Verbosity dose-response (0.61 depth, 3 seeds, alpha grid)
+
+| Model | resid_norm@L | baseline | terse (α=−0.20) | verbose (α=+0.20) | shape |
+|:--|--:|--:|--:|--:|:--|
+| **Qwen2.5-7B** | 464.5 | 72 | **38** | 80 (peak, cliff at 0.284) | interior-optimum, strong |
+| **Llama-3.1-8B** | 43.7 | 72 | 64 | 76 | weak |
+| **Mistral-7B** | 28.7 | 60 | 55 | 61 | near-flat |
+
+Walls: Qwen 374s, Llama/Mistral similar. Verbosity **own-direction layer sweep**
+(at α=0.044) coherent peaks: Qwen **L14 (0.50)**, Llama **L11 (0.34)**, Mistral
+**L9 (0.28)** — receptive layer trends shallower than formality and differs by
+architecture again. Artifacts:
+`artifacts/{dose_response,layer_sweep}_verbosity_{qwen,llama,mistral}.{csv,png}`.
+
+### Extraction-stability panel (mean pairwise inject-layer cosine, 3× resample)
+
+The stability check is now standard. Signed cosine at the injection layer; where
+runs sign-flip (a benign repeng PCA-orientation quirk, resolved at steer time)
+the `|cos|` in parentheses is the direction-line stability.
+
+| | formality (ss 0.7 / 0.9) | sentiment | verbosity |
+|:--|:--|:--|:--|
+| **Qwen2.5-7B** | 0.64 / **0.97** | 0.95 | −0.32 (**\|cos\| 0.94**, sign-flip) |
+| **Llama-3.1-8B** | 0.55 / **0.83** | — | 0.92 |
+| **Mistral-7B** | **−0.13** (sign-flipping, un-extractable) | 0.95 | 0.93 |
+
+**Reading the panel:**
+- **Qwen & Llama formality are stable** (0.97 / 0.83 at a gentle 0.9 resample;
+  the lower 0.7 numbers are resampling variance on only 69 pairs). Both are
+  positive-consistent — so the **Qwen interior-optimum vs Llama monotonic-to-cliff
+  dose-shape contrast rests on real, reproducible vectors**, not extraction noise.
+- **Mistral formality is genuinely un-extractable** (−0.13, sign-flipping even at
+  ss 0.7) — the ONE noise cell. Every other Mistral concept extracts stably.
+- **Sign-flip ≠ noise:** Qwen verbosity signs flip run-to-run but `|cos|`=0.94,
+  so the direction line is stable; it steers fine (dose-response is clean). This
+  is why the panel reports `|cos|` alongside signed cosine.
+
+### Two distinct Mistral failure modes steerbench separates
+
+| Mistral concept | extraction | steering | diagnosis |
+|:--|:--|:--|:--|
+| formality | **unstable** (cos −0.13) | flat | **un-extractable** — no reliable direction |
+| verbosity | stable (cos 0.93) | weak (60→61) | **stable-but-weak** — real mild dissociation |
+| sentiment | stable (cos 0.95) | steers | works |
+
+Without the stability panel these first two look identical ("flat dose-response");
+with it they are clearly different failures. **A steering report card must show
+extraction stability** — it separates "the vector is noise" from "the vector is
+real but the model barely moves."
+
+**3-concept acceptance criterion: formality ✓ · sentiment ✓ · verbosity ✓.**
