@@ -17,8 +17,11 @@ uv run pre-commit install
   reported mean ± std over 3+ seeds.
 
 ## Good first issues
-See the `good first issue` label. If the tracker is empty, open an issue
-describing what you'd like to add and we'll scope it together.
+See the [`good first issue`](https://github.com/bamdadd/steerbench/labels/good%20first%20issue)
+label (most are also tagged [`help wanted`](https://github.com/bamdadd/steerbench/labels/help%20wanted)).
+Each one has a problem description, file:line pointers, and acceptance criteria
+including which test to add. If the tracker is empty, open an issue describing
+what you'd like to add and we'll scope it together.
 
 ## Reproducibility rules
 - Pin versions (the `uv.lock` is committed).

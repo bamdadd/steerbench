@@ -159,6 +159,12 @@ sentiment, verbosity).
 non-determinism bug found while building steerbench, and the one-line fix
 ([vgel/repeng#79](https://github.com/vgel/repeng/pull/79)).
 
+## Contributing
+
+Contributions welcome — start with the [good first issues](https://github.com/bamdadd/steerbench/labels/good%20first%20issue)
+(each has file:line pointers and acceptance criteria). See
+[CONTRIBUTING.md](CONTRIBUTING.md) for setup and the checks a PR must pass.
+
 ## License
 
 MIT.
