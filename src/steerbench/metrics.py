@@ -573,6 +573,8 @@ def load_mmlu_slice(
     cache miss. Slice size and seed are part of the cache key so different
     configs coexist.
     """
+    if n < 1:
+        raise ValueError(f"n must be >= 1, got {n}")
     path = _cache_path(cache_dir, f"mmlu_{n}_{seed}.json")
     if path.exists():
         rows = json.loads(path.read_text())
@@ -611,6 +613,8 @@ def load_gsm8k_slice(
     Gold answers are normalised from the dataset's ``#### <n>`` format at load
     time so scoring never re-parses them.
     """
+    if n < 1:
+        raise ValueError(f"n must be >= 1, got {n}")
     path = _cache_path(cache_dir, f"gsm8k_{n}_{seed}.json")
     if path.exists():
         rows = json.loads(path.read_text())
