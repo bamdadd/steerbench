@@ -152,13 +152,29 @@ def load_vector(path: str | Path) -> SteeringVector:
 
     A leading ``GGUF`` magic → repeng's native format. Otherwise the file is
     treated as a plain ``.pt`` mapping of ``layer -> tensor`` (the fallback).
+
+    Raises:
+        ValueError: the file is too short to carry a format magic, or it parses
+            but holds no directions. Both are checked here rather than in the
+            loaders so the message names the path and the real cause instead of
+            a torch/gguf traceback from deep inside the fallback path.
     """
     path = Path(path)
     with path.open("rb") as f:
         magic = f.read(4)
-    if magic == _GGUF_MAGIC:
-        return _load_gguf(path)
-    return _load_pt(path)
+    if len(magic) < len(_GGUF_MAGIC):
+        reason = "file is empty" if not magic else f"file is too short ({len(magic)} bytes)"
+        raise ValueError(
+            f"{path}: {reason}; expected a repeng GGUF vector or a .pt mapping of layer -> tensor"
+        )
+
+    vector = _load_gguf(path) if magic == _GGUF_MAGIC else _load_pt(path)
+    if not vector.directions:
+        raise ValueError(
+            f"{path}: no steering directions found; expected at least one "
+            f"{_DIRECTION_PREFIX}{{layer}} tensor (GGUF) or one layer -> tensor entry (.pt)"
+        )
+    return vector
 
 
 def save_vector(vector: SteeringVector, path: str | Path) -> None:

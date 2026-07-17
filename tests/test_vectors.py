@@ -108,6 +108,49 @@ def test_pt_fallback_rejects_non_dict(tmp_path: Path) -> None:
         load_vector(path)
 
 
+def test_rejects_empty_file(tmp_path: Path) -> None:
+    """An empty file must name itself as the cause, not surface torch's EOFError."""
+    path = tmp_path / "empty.pt"
+    path.write_bytes(b"")
+    with pytest.raises(ValueError, match="file is empty"):
+        load_vector(path)
+
+
+def test_rejects_truncated_file(tmp_path: Path) -> None:
+    """Shorter than the 4-byte magic → too short to detect a format."""
+    path = tmp_path / "truncated.gguf"
+    path.write_bytes(b"GG")
+    with pytest.raises(ValueError, match="too short"):
+        load_vector(path)
+
+
+def test_gguf_without_directions_rejected(tmp_path: Path) -> None:
+    """A parseable GGUF carrying no ``direction.*`` tensors is not a vector."""
+    gguf = pytest.importorskip("gguf")
+    import numpy as np
+
+    path = tmp_path / "nodir.gguf"
+    writer = gguf.GGUFWriter(str(path), "controlvector")
+    writer.add_string("controlvector.model_hint", "gpt2")
+    writer.add_uint32("controlvector.layer_count", 0)
+    writer.add_tensor("not_a_direction", np.array([1.0], dtype=np.float32))
+    writer.write_header_to_file()
+    writer.write_kv_data_to_file()
+    writer.write_tensors_to_file()
+    writer.close()
+
+    with pytest.raises(ValueError, match="no steering directions found"):
+        load_vector(path)
+
+
+def test_pt_without_directions_rejected(tmp_path: Path) -> None:
+    """A .pt saved from an empty dict is parseable but carries no directions."""
+    path = tmp_path / "empty_dict.pt"
+    torch.save({}, path)
+    with pytest.raises(ValueError, match="no steering directions found"):
+        load_vector(path)
+
+
 def test_normalize_alpha_by_vector_norm() -> None:
     vec = _synthetic()
     result = normalize_alpha(vec, layer=5, alpha=2.0)
