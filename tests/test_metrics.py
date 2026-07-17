@@ -24,6 +24,8 @@ from steerbench.metrics import (
     extract_mmlu_answer,
     formality_score,
     format_mmlu_prompt,
+    load_gsm8k_slice,
+    load_mmlu_slice,
     perplexity_from_token_nlls,
     repetition_rate,
     score_gsm8k,
@@ -218,6 +220,23 @@ def test_score_and_evaluate_gsm8k() -> None:
         return ["...therefore 18 apples", "the bill is $1,000 exactly"]
 
     assert evaluate_gsm8k(examples, fake_generate) == 1.0
+
+
+# --------------------------------------------------------------------------- #
+# SLICE LOADERS — n validation (guard fires before any cache/datasets access)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("bad_n", [0, -3])
+def test_load_mmlu_slice_rejects_n_below_1(bad_n: int) -> None:
+    with pytest.raises(ValueError):
+        load_mmlu_slice(n=bad_n)
+
+
+@pytest.mark.parametrize("bad_n", [0, -3])
+def test_load_gsm8k_slice_rejects_n_below_1(bad_n: int) -> None:
+    with pytest.raises(ValueError):
+        load_gsm8k_slice(n=bad_n)
 
 
 def test_no_optional_deps_imported() -> None:
