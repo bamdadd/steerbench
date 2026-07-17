@@ -7,7 +7,10 @@ optional deps (torch/transformers/datasets) are never imported.
 
 from __future__ import annotations
 
+import json
 import math
+import socket
+from pathlib import Path
 
 import pytest
 
@@ -237,6 +240,58 @@ def test_load_mmlu_slice_rejects_n_below_1(bad_n: int) -> None:
 def test_load_gsm8k_slice_rejects_n_below_1(bad_n: int) -> None:
     with pytest.raises(ValueError):
         load_gsm8k_slice(n=bad_n)
+
+
+# --------------------------------------------------------------------------- #
+# SLICE LOADERS — accept path with pre-seeded cache (n=1, no network)
+# --------------------------------------------------------------------------- #
+
+
+def _block_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make any socket construction raise, so a cache miss cannot download."""
+
+    def _no_socket(*args: object, **kwargs: object) -> object:
+        raise OSError("network access disabled in test")
+
+    monkeypatch.setattr(socket, "socket", _no_socket)
+
+
+def test_load_mmlu_slice_accepts_n_equal_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _block_network(monkeypatch)
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    fixture = cache_dir / "mmlu_1_0.json"
+    fixture.write_text(
+        json.dumps([{"question": "What is 2+2?", "choices": ["1", "2", "3", "4"], "answer": 3}])
+    )
+
+    examples = load_mmlu_slice(n=1, cache_dir=cache_dir)
+
+    assert len(examples) == 1
+    ex = examples[0]
+    assert isinstance(ex, MMLUExample)
+    assert isinstance(ex.question, str)
+    assert isinstance(ex.choices, list)
+    assert all(isinstance(c, str) for c in ex.choices)
+    assert isinstance(ex.answer, int)
+
+
+def test_load_gsm8k_slice_accepts_n_equal_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _block_network(monkeypatch)
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    fixture = cache_dir / "gsm8k_1_0.json"
+    fixture.write_text(json.dumps([{"question": "How many apples?", "answer": "42"}]))
+
+    examples = load_gsm8k_slice(n=1, cache_dir=cache_dir)
+
+    assert len(examples) == 1
+    ex = examples[0]
+    assert isinstance(ex, GSM8KExample)
+    assert isinstance(ex.question, str)
+    assert isinstance(ex.answer, str)
 
 
 def test_no_optional_deps_imported() -> None:
