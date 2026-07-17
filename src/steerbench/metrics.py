@@ -577,7 +577,7 @@ def load_mmlu_slice(
         raise ValueError(f"n must be >= 1, got {n}")
     path = _cache_path(cache_dir, f"mmlu_{n}_{seed}.json")
     if path.exists():
-        rows = json.loads(path.read_text())
+        rows = json.loads(path.read_text())[:n]
         return [
             MMLUExample(question=r["question"], choices=list(r["choices"]), answer=int(r["answer"]))
             for r in rows
@@ -617,7 +617,7 @@ def load_gsm8k_slice(
         raise ValueError(f"n must be >= 1, got {n}")
     path = _cache_path(cache_dir, f"gsm8k_{n}_{seed}.json")
     if path.exists():
-        rows = json.loads(path.read_text())
+        rows = json.loads(path.read_text())[:n]
         return [GSM8KExample(question=r["question"], answer=str(r["answer"])) for r in rows]
 
     from datasets import load_dataset  # local import: gated optional dependency

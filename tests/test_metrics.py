@@ -294,6 +294,50 @@ def test_load_gsm8k_slice_accepts_n_equal_1(
     assert isinstance(ex.answer, str)
 
 
+def test_load_mmlu_slice_cache_hit_slices_to_n(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cache file holding more rows than ``n`` must still yield exactly ``n``."""
+    _block_network(monkeypatch)
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    fixture = cache_dir / "mmlu_1_0.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {"question": "What is 2+2?", "choices": ["1", "2", "3", "4"], "answer": 3},
+                {"question": "What is 3+3?", "choices": ["5", "6", "7", "8"], "answer": 1},
+            ]
+        )
+    )
+
+    examples = load_mmlu_slice(n=1, cache_dir=cache_dir)
+
+    assert len(examples) == 1
+
+
+def test_load_gsm8k_slice_cache_hit_slices_to_n(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cache file holding more rows than ``n`` must still yield exactly ``n``."""
+    _block_network(monkeypatch)
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    fixture = cache_dir / "gsm8k_1_0.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {"question": "How many apples?", "answer": "42"},
+                {"question": "How many oranges?", "answer": "7"},
+            ]
+        )
+    )
+
+    examples = load_gsm8k_slice(n=1, cache_dir=cache_dir)
+
+    assert len(examples) == 1
+
+
 def test_no_optional_deps_imported() -> None:
     # Importing steerbench.metrics must not pull in the heavy optional deps.
     # Checked in a fresh interpreter: a global sys.modules check is unreliable
