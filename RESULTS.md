@@ -15,21 +15,27 @@ ControlVector on cheap small models. This is the **canonical reproducible** run
   (1−distinct-2) + unsteered perplexity. Capability side-effects (MMLU/GSM8K) are
   deliberately **not** folded into the dose curve — separate work.
 
-## Headline — the max-effect layer transfers to 0.61 depth across scales
+## Headline — 0.61 depth is a high-effect coherent injection layer at every scale
 
-| model | params | depth | coherent concept-steering peak | frac-of-depth | plateau (frac) |
-|---|---|---|---|---|---|
-| Qwen2.5-0.5B-Instruct | 0.5B | 24 L | L15–16 | **0.62–0.67** | ~0.58–0.83 |
-| Qwen2.5-1.5B-Instruct | 1.5B | 28 L | L17 (argmax) | **0.61** | ~0.61–0.93 |
-| Qwen2.5-7B-Instruct (prior, real) | 7B | 28 L | L17 | **0.607** | back-half |
+| model | params | depth | coherent-effect argmax | frac | high-effect plateau (frac) | 0.61 status |
+|---|---|---|---|---|---|---|
+| Qwen2.5-0.5B-Instruct | 0.5B | 24 L | L23 (last) | 0.96 | ~0.58–0.96 | plateau start, not argmax |
+| Qwen2.5-1.5B-Instruct | 1.5B | 28 L | L17 | **0.61** | ~0.61–0.93 | argmax |
+| Qwen2.5-7B-Instruct (prior, real) | 7B | 28 L | L17 | **0.607** | back-half | argmax |
 
-Three model sizes spanning ~14× params independently place the coherent
-maximum-effect formality-injection layer at **frac ≈ 0.61 of depth**. This is the
-depth **introspection-scaling** uses for dose/layer, so steerbench's per-layer
-sensitivity independently justifies that hyperparameter rather than assuming it.
-Reported as a **plateau**, not razor-precision: with 3 seeds the argmax is coarse
-and the back half is a broad high band; 0.61 is the argmax/lower edge of that band,
-not a unique spike.
+The honest claim: on all three sizes, **frac ≈ 0.61 is a high-effect, coherent
+formality-injection depth** — it sits on the coherent back-half plateau at every
+scale, and on 1.5B and 7B it is the **argmax**. This justifies the depth
+**introspection-scaling** injects/reads at (0.61) — measured, not assumed, across
+a ~14× size range.
+
+The honest caveat (do **not** overclaim a universal 0.61 argmax): on **0.5B the
+numeric argmax is the last layer (frac 0.96)**, and it is **real coherent formal
+prose**, not an artifact — a 1-seed inspection at L23/coeff 33 produced fluent,
+more-formal-than-baseline text (verified, not asserted). So 0.5B's effect keeps
+climbing gently to the output end; 0.61 is the **start of its coherent plateau**,
+not its peak. Reported as a plateau, not razor-precision — with 3 seeds the argmax
+is coarse and the back half is a broad high band.
 
 **Total GPU spend: ~$0.70** (measured dose+sweep wall 3,464 s across 5 sweeps +
 ~600 s container/cold-start overhead across 8 T4 runs; T4 @ ~$0.59/hr). Well
@@ -123,19 +129,26 @@ grid overshoots hard, so the model is far more fragile.
 
 ### Layer sweep @ α 0.124 (strongest clean dose)
 
-`layer_sweep_qwen0.5b.{csv,png}`, baseline 4.53, coherent-gated:
+`layer_sweep_qwen0.5b.{csv,png}`, baseline 4.53, coherent-gated (rep < 0.15, ppl < 6):
 
 | region | frac | formality | read |
 |---|---|---|---|
-| **concept peak** | **0.62–0.67 (L15–16)** | **5.02–5.06** | plateau top; L15/0.62 on anchor |
-| plateau | 0.58–0.83 (L14–20) | 4.87–5.06 | rep < 0.10, ppl < 6 |
+| **argmax** | **0.96 (L23, last)** | **5.77 ± 0.17** | rep 0.05, ppl 5.5 — real formal prose (verified) |
+| plateau | 0.58–0.96 (L14–23) | 4.87–5.77 | broad coherent high band; climbs to the output end |
+| 0.61 anchor | 0.62–0.67 (L15–16) | 5.02–5.06 | on the plateau, not its peak |
 | dead-spot | 0.29–0.54 (L7–13) | 3.2–4.25 | ppl 6–15, rep spikes |
 
-**Honest caveat:** the automatic coherent-gated argmax is **L23/frac 0.96 (5.77)**,
-but that is an **output-layer edge artifact** — the last layer, coeff 33 (vs ~8
-mid-stack) at fixed α, directly boosting formal-word logits, not concept steering.
-It is excluded from the concept-layer claim; the concept peak is the mid-0.6
-plateau. 0.5B is also noisier than 1.5B (seed std up to ±0.7 mid-stack).
+**On the argmax (verified, not assumed):** the coherent-gated argmax is
+**L23/frac 0.96 (5.77)** — the last layer, where fixed α maps to coeff 33 (vs ~8
+mid-stack). I initially suspected an output-layer logit-boost artifact, but a
+1-seed inspection at L23/coeff 33 disproved that: the generation is fluent,
+coherent, and more formal than baseline ("…created by Alibaba Cloud… including but
+not limited to general knowledge, cultural customs, scientific discoveries…") — a
+real steering effect, not gamed tokens or truncation. So 0.5B genuinely peaks at
+the output end; **0.61 is the start of its coherent plateau, not its peak.** (By
+contrast, on 1.5B the last layers sit at/below baseline — e.g. L25/coeff 43.8 =
+4.88, L27 = 4.56 — so this is a 0.5B-specific late-layer climb, not a general
+high-coeff effect.) 0.5B is also noisier than 1.5B (seed std up to ±0.7 mid-stack).
 
 ---
 
@@ -149,8 +162,12 @@ plateau. 0.5B is also noisier than 1.5B (seed std up to ±0.7 mid-stack).
 3. **Past-cliff effect is an artifact.** Beyond the cliff the formality proxy can
    rise, but on degenerate repetition (1.5B) or collapsed/near-empty output
    (0.5B) — not real steering; report the usable band, not the raw max.
-4. **Peak is a plateau, not a point.** 3 seeds give a coarse argmax; the back half
-   is broadly high. "0.61" is the argmax/edge of a plateau, honestly labelled.
+4. **Peak is a plateau, not a point — and 0.61 is not the argmax everywhere.**
+   3 seeds give a coarse argmax; the back half is broadly high. 0.61 is the clean
+   argmax on 1.5B and 7B, but on 0.5B the argmax is the last layer (0.96, verified
+   real prose) and 0.61 is only the plateau *start*. The defensible claim is
+   "0.61 is a high-effect coherent injection depth at every scale," not "0.61 is
+   the universal peak."
 
 ## Reproduce
 

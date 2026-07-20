@@ -591,14 +591,19 @@ def train_and_export(
 
 
 @app.function(gpu=GPU, timeout=1800, volumes={VOL: vol}, secrets=[HF_SECRET])
-def smoke(layer: int = 14, big_coeff: float = 8.0) -> dict:
+def smoke(
+    layer: int = 14,
+    big_coeff: float = 8.0,
+    model_id: str = MODEL_ID,
+    gguf_path: str | None = None,
+) -> dict:
     import sys
 
     sys.path.insert(0, "/root/src")
     vol.reload()  # see the freshly committed gguf
     from steerbench.vectors import load_vector
 
-    vec = load_vector(GGUF_PATH)  # exercise the real reload path
+    vec = load_vector(gguf_path or GGUF_PATH)  # exercise the real reload path
     print(f"reloaded keys: {sorted(vec.directions.keys())}")
 
     import numpy as np
@@ -606,7 +611,7 @@ def smoke(layer: int = 14, big_coeff: float = 8.0) -> dict:
     dnorm = float(np.linalg.norm(vec.directions[layer]))
     print(f"layer {layer} ||dir|| = {dnorm:.4f}")
 
-    model, tok = _load_model_and_tokenizer()
+    model, tok = _load_model_and_tokenizer(model_id)
     from repeng import ControlModel
 
     cmodel = ControlModel(model, [layer])

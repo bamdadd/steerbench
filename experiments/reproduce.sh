@@ -15,20 +15,23 @@ MODAL="${MODAL:-modal}"
 APP="experiments/modal_app.py"
 MODEL="${MODEL:-1.5b}"
 
+# SWEEP_ALPHA = the strongest-still-coherent dose for the resolved layer sweep,
+# read from each model's own anchor-layer dose-response usable band (see
+# RESULTS.md). 0.044 (the transferable 7B dose) is below the resolving floor on
+# small models, so each model gets its own cliff-justified value.
 if [[ "$MODEL" == "1.5b" ]]; then
   MODEL_ID="Qwen/Qwen2.5-1.5B-Instruct"; NLAYERS=28; ANCHOR=17; STEM="qwen1.5b"
   GGUF=""                       # 1.5B is the default MODEL_ID -> uses GGUF_PATH
+  DEFAULT_ALPHA=0.09
 elif [[ "$MODEL" == "0.5b" ]]; then
   MODEL_ID="Qwen/Qwen2.5-0.5B-Instruct"; NLAYERS=24; ANCHOR=15; STEM="qwen0.5b"
   GGUF="/vol/formality_Qwen2_5-0_5B-Instruct.gguf"
+  DEFAULT_ALPHA=0.124
 else
   echo "MODEL must be 1.5b or 0.5b" >&2; exit 1
 fi
 
-# alpha for the resolved layer sweep. 0.044 (the transferable 7B dose) is below
-# the resolving floor on small models; 0.09 is the strongest-still-coherent dose
-# read from the anchor-layer dose-response usable band (see RESULTS.md).
-SWEEP_ALPHA="${SWEEP_ALPHA:-0.09}"
+SWEEP_ALPHA="${SWEEP_ALPHA:-$DEFAULT_ALPHA}"
 
 echo "== 1/4 train formality ControlVector ($MODEL_ID) =="
 if [[ "$MODEL" == "1.5b" ]]; then
