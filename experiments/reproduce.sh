@@ -27,7 +27,7 @@ fi
 
 # alpha for the resolved layer sweep. 0.044 (the transferable 7B dose) is below
 # the resolving floor on small models; 0.09 is the strongest-still-coherent dose
-# read from the anchor-layer dose-response usable band (see RESULTS_small_model.md).
+# read from the anchor-layer dose-response usable band (see RESULTS.md).
 SWEEP_ALPHA="${SWEEP_ALPHA:-0.09}"
 
 echo "== 1/4 train formality ControlVector ($MODEL_ID) =="

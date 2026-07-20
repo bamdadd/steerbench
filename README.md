@@ -11,6 +11,14 @@
 coefficient while perplexity holds — then falls off the **coherence cliff**.
 steerbench marks the sweet spot and the cliff automatically.*
 
+> The hero stays the real 7B curve — largest dynamic range, and it anchors the
+> shape narrative below. For a **one-command, in-repo reproducible** version on a
+> cheap T4 (no A100), see the small-model canonical run in
+> [`RESULTS.md`](RESULTS.md) via [`experiments/reproduce.sh`](experiments/reproduce.sh):
+> Qwen2.5-1.5B and 0.5B reproduce the same interior-optimum dose-response shape
+> and independently place the max-effect formality layer at **frac ≈ 0.61 of
+> depth**.
+
 ## Quickstart
 
 Render the four-part card from a repeng vector — CPU-only, no model download:
@@ -89,7 +97,11 @@ project steerbench was built for — asks whether models can introspect on
 *injected* concepts as they scale. To run that cleanly it must inject at a
 known-good layer and strength on every model in the ladder. steerbench produces
 that report card — the sweet spot, the cliff, the safe layer — so the injection
-is **calibrated, not guessed**.
+is **calibrated, not guessed**. Concretely: introspection-scaling injects/reads at
+**frac ≈ 0.61 of depth**, and steerbench's layer sweep independently puts the
+coherent max-effect formality layer at that same depth on Qwen2.5-**0.5B, 1.5B
+and 7B** (see [`RESULTS.md`](RESULTS.md)) — so the depth hyperparameter is
+measured across a 14× size range, not assumed.
 
 ## Results
 
