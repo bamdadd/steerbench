@@ -15,6 +15,7 @@ to ``modal``; core never imports the harness).
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -101,6 +102,11 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="FUNCTION",
         help="run a Modal harness function (needs steerbench[gpu]) instead of rendering",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print the written artifact paths as a single JSON object (suppresses human text)",
+    )
     return parser
 
 
@@ -126,9 +132,12 @@ def main(argv: list[str] | None = None) -> int:
         out_dir=args.out,
         stem=args.stem,
     )
-    print("[steerbench] wrote:")
-    for kind, path in outputs.items():
-        print(f"  {kind:9s} {path}")
+    if args.json:
+        print(json.dumps({kind: str(path) for kind, path in outputs.items()}))
+    else:
+        print("[steerbench] wrote:")
+        for kind, path in outputs.items():
+            print(f"  {kind:9s} {path}")
     return 0
 
 
