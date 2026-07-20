@@ -124,6 +124,11 @@ def main(argv: list[str] | None = None) -> int:
         if not csv_path.exists():
             parser.error(f"{label} CSV not found: {csv_path}")
 
+    # An explicitly named side CSV must exist; only an *unspecified* one may
+    # fall back to the header-only stub.
+    if args.side_csv is not None and not args.side_csv.exists():
+        parser.error(f"side-effects CSV not found: {args.side_csv}")
+
     side_csv = _ensure_side_csv(args.side_csv, args.out)
     outputs = report.build_report(
         dose_csv=args.dose_csv,

@@ -67,3 +67,25 @@ def test_cli_json_emits_artifact_paths(tmp_path: Path, capsys: pytest.CaptureFix
 def test_cli_errors_on_missing_csv(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         cli.main(["--dose-csv", str(tmp_path / "nope.csv"), "--out", str(tmp_path / "o")])
+
+
+def test_cli_errors_on_missing_named_side_csv(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An explicitly named --side-csv that doesn't exist must error, not
+    # silently fall back to the header-only stub (that's for unspecified only).
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "--dose-csv",
+                str(_DOSE),
+                "--layer-csv",
+                str(_LAYER),
+                "--side-csv",
+                str(tmp_path / "typo.csv"),
+                "--out",
+                str(tmp_path / "o"),
+            ]
+        )
+    assert exc.value.code != 0
+    assert "side-effects CSV not found" in capsys.readouterr().err
