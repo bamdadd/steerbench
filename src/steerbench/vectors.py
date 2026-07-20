@@ -125,8 +125,7 @@ def normalize_alpha(
     """
     if layer not in vector.directions:
         raise ValueError(
-            f"layer {layer} not in steering vector; "
-            f"available layers: {sorted(vector.directions)}"
+            f"layer {layer} not in steering vector; available layers: {sorted(vector.directions)}"
         )
     norm = float(torch.linalg.vector_norm(vector.directions[layer]))
     by_vector = alpha * norm

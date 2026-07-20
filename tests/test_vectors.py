@@ -215,17 +215,13 @@ def test_gguf_superset_loads_in_repeng(tmp_path: Path) -> None:
 
 
 def test_normalize_alpha_out_of_range_layer_names_available() -> None:
-    vec = SteeringVector(
-        directions={3: torch.tensor([1.0, 0.0]), 7: torch.tensor([0.0, 2.0])}
-    )
+    vec = SteeringVector(directions={3: torch.tensor([1.0, 0.0]), 7: torch.tensor([0.0, 2.0])})
     with pytest.raises(ValueError, match=r"layer 999 not in steering vector.*\[3, 7\]"):
         normalize_alpha(vec, layer=999, alpha=1.0)
 
 
 def test_dose_out_of_range_layer_names_available() -> None:
-    vec = SteeringVector(
-        directions={3: torch.tensor([1.0, 0.0]), 7: torch.tensor([0.0, 2.0])}
-    )
+    vec = SteeringVector(directions={3: torch.tensor([1.0, 0.0]), 7: torch.tensor([0.0, 2.0])})
     with pytest.raises(ValueError, match=r"layer 999 not in steering vector.*\[3, 7\]"):
         dose(vec, layer=999, alpha=1.0, residual_norm=10.0)
 
