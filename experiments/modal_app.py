@@ -1,9 +1,9 @@
 """Modal app for steerbench M0: repeng ControlVector dose-response + layer sweep.
 
-Serverless A100. Pinned image so runs are reproducible.
+Serverless T4 (small-model canonical run). Pinned image so runs are reproducible.
 
 Pipeline:
-  1. train_and_export   — train a FORMALITY ControlVector on Qwen2.5-7B-Instruct,
+  1. train_and_export   — train a FORMALITY ControlVector on Qwen2.5-1.5B-Instruct,
                           save in repeng's native gguf to a Volume, print keys+norms.
   2. smoke              — reload gguf via steerbench.load_vector, steer one mid layer,
                           generate at coeff 0 and a big coeff (de-risk everything cheap).
@@ -48,11 +48,15 @@ app = modal.App("steerbench-m0", image=image)
 vol = modal.Volume.from_name("steerbench-m0-vol", create_if_missing=True)
 VOL = "/vol"
 HF_CACHE = f"{VOL}/hf"
-GGUF_PATH = f"{VOL}/formality.gguf"
+# Distinct stem so the small-model vector never overwrites the 7B shared gguf.
+GGUF_PATH = f"{VOL}/formality_qwen1.5b.gguf"
 
-MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"
-MODEL_BASE = "Qwen/Qwen2.5-7B"
-GPU = "A100"
+# Small-model canonical run (T4-cheap). 1.5B primary, 0.5B secondary.
+# The 7B/8B/9B cross-model artifacts are separate files and stay untouched.
+MODEL_ID = "Qwen/Qwen2.5-1.5B-Instruct"
+MODEL_BASE = "Qwen/Qwen2.5-1.5B"
+GPU = "T4"  # 16GB fits <=1.5B; cheapest. bf16 unverified on Turing — confirm on
+# first train run; if it throws a kernel error, switch dtype to torch.float16.
 
 # HF token for gated models (Llama, Gemma). Modal secret "huggingface".
 HF_SECRET = modal.Secret.from_name("huggingface")
@@ -63,6 +67,10 @@ HF_SECRET = modal.Secret.from_name("huggingface")
 SWEET_ALPHA = 0.044
 INJECT_FRAC = 0.61
 MODELS = {
+    # small-model canonical run (this branch)
+    "qwen1.5b": "Qwen/Qwen2.5-1.5B-Instruct",  # primary, 28 layers
+    "qwen0.5b": "Qwen/Qwen2.5-0.5B-Instruct",  # secondary, 24 layers
+    # cross-model set (existing 7B/8B/9B artifacts, untouched)
     "qwen": "Qwen/Qwen2.5-7B-Instruct",
     # ungated mirror of Llama-3.1-8B-Instruct (identical weights)
     "llama": "NousResearch/Meta-Llama-3.1-8B-Instruct",
@@ -583,14 +591,19 @@ def train_and_export(
 
 
 @app.function(gpu=GPU, timeout=1800, volumes={VOL: vol}, secrets=[HF_SECRET])
-def smoke(layer: int = 14, big_coeff: float = 8.0) -> dict:
+def smoke(
+    layer: int = 14,
+    big_coeff: float = 8.0,
+    model_id: str = MODEL_ID,
+    gguf_path: str | None = None,
+) -> dict:
     import sys
 
     sys.path.insert(0, "/root/src")
     vol.reload()  # see the freshly committed gguf
     from steerbench.vectors import load_vector
 
-    vec = load_vector(GGUF_PATH)  # exercise the real reload path
+    vec = load_vector(gguf_path or GGUF_PATH)  # exercise the real reload path
     print(f"reloaded keys: {sorted(vec.directions.keys())}")
 
     import numpy as np
@@ -598,7 +611,7 @@ def smoke(layer: int = 14, big_coeff: float = 8.0) -> dict:
     dnorm = float(np.linalg.norm(vec.directions[layer]))
     print(f"layer {layer} ||dir|| = {dnorm:.4f}")
 
-    model, tok = _load_model_and_tokenizer()
+    model, tok = _load_model_and_tokenizer(model_id)
     from repeng import ControlModel
 
     cmodel = ControlModel(model, [layer])
@@ -1080,12 +1093,15 @@ def run_dose(
     rep_m = [agg[c]["repetition"][0] for c in cs]
     ppl_m = [agg[c]["ppl"][0] for c in cs]
 
+    # derive depth-fraction + GPU string from actuals (was hardcoded 7B/A100)
+    frac = layer / res["n_layers"]
+
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
     ax1.errorbar(cs, form_m, yerr=form_s, marker="o", capsize=3, color="C0")
     ax1.axvline(0, color="gray", ls=":", lw=1)
     ax1.set_xlabel("coefficient (raw)")
     ax1.set_ylabel("formality proxy (higher = more formal)")
-    ax1.set_title(f"EFFECT — dose-response @ layer {layer} (0.50 depth)")
+    ax1.set_title(f"EFFECT — dose-response @ layer {layer} ({frac:.2f} depth)")
     ax1.grid(alpha=0.3)
 
     ax2.plot(cs, rep_m, marker="s", color="C3", label="repetition (1-distinct2)")
@@ -1098,8 +1114,8 @@ def run_dose(
     ax2.set_title("COHERENCE — the cliff")
     ax2.grid(alpha=0.3)
     fig.suptitle(
-        f"steerbench dose-response · {model_id.split('/')[-1]} · A100 · "
-        f"3 seeds · layer {layer}/{res['n_layers']} · "
+        f"steerbench dose-response · {model_id.split('/')[-1]} · {GPU} · "
+        f"3 seeds · layer {layer}/{res['n_layers']} ({frac:.2f} depth) · "
         f"||dir||={res['dir_norm']:.2f} resid_norm={res['resid_norm']:.1f} · "
         f"wall {res['wall_s']:.0f}s")
     fig.tight_layout()
@@ -1115,9 +1131,16 @@ def run_dose(
 
 
 @app.local_entrypoint()
-def run_layer_sweep(target_alpha: float = 0.044, coeff: float = 0.0) -> None:
+def run_layer_sweep(
+    target_alpha: float = 0.044,
+    coeff: float = 0.0,
+    model_id: str = MODEL_ID,
+    n_layers: int = 28,
+    stem: str = "layer_sweep",
+) -> None:
     """Primary: fixed-alpha (equal normalized strength per layer).
     Pass coeff>0 to instead run the secondary fixed-raw-coeff mode.
+    model_id/n_layers/stem let this retarget any model (28 for 1.5B, 24 for 0.5B).
     """
     import csv
     import os
@@ -1127,14 +1150,19 @@ def run_layer_sweep(target_alpha: float = 0.044, coeff: float = 0.0) -> None:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    layers = list(range(1, 28))  # each layer's own direction
+    gguf_path = _gguf_path(model_id) if model_id != MODEL_ID else GGUF_PATH
+    layers = list(range(1, n_layers))  # each layer's own direction
     seeds = [0, 1, 2]
     if coeff > 0:
-        res = layer_sweep.remote(seeds=seeds, layers=layers, coeff=coeff)
-        tag, stem = f"coeff={coeff}", "layer_sweep_coeff"
+        res = layer_sweep.remote(seeds=seeds, layers=layers, coeff=coeff,
+                                 model_id=model_id, gguf_path=gguf_path)
+        tag = f"coeff={coeff}"
+        stem = f"{stem}_coeff" if stem == "layer_sweep" else stem
     else:
-        res = layer_sweep.remote(seeds=seeds, layers=layers, target_alpha=target_alpha)
-        tag, stem = f"alpha_norm={target_alpha}", "layer_sweep"
+        res = layer_sweep.remote(seeds=seeds, layers=layers,
+                                 target_alpha=target_alpha,
+                                 model_id=model_id, gguf_path=gguf_path)
+        tag = f"alpha_norm={target_alpha}"
     rows = res["rows"]
     n_layers = res["n_layers"]
 
@@ -1165,7 +1193,7 @@ def run_layer_sweep(target_alpha: float = 0.044, coeff: float = 0.0) -> None:
     ax1b.plot(ls, rep_m, marker="s", color="C3", alpha=0.6, label="repetition")
     ax1b.set_ylabel("repetition rate", color="C3")
     ax1.set_title(
-        f"steerbench layer sweep · Qwen2.5-7B-Instruct · A100 · {tag} · "
+        f"steerbench layer sweep · {model_id.split('/')[-1]} · {GPU} · {tag} · "
         f"3 seeds · own-direction-per-layer · wall {res['wall_s']:.0f}s")
     ax1.grid(alpha=0.3)
     ax2 = ax1.secondary_xaxis(
