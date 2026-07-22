@@ -169,6 +169,10 @@ sentiment, verbosity).
 
 ## Related reading
 
+[Same recipe, different curves: a vector that lied](https://bamdad.substack.com/p/same-recipe-different-curves-a-vector) —
+dose-response shape differs by architecture, and a flat curve can mean a broken
+vector rather than a stubborn model; the report card tells them apart.
+
 [Two bugs in repeng](https://bamdad.substack.com/p/two-bugs-in-repeng) — the
 non-determinism bug found while building steerbench, and the one-line fix
 ([vgel/repeng#79](https://github.com/vgel/repeng/pull/79)).
