@@ -114,6 +114,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args, extra = parser.parse_known_args(argv)
 
+    if not args.stem.strip():
+        parser.error("output stem must not be empty")
+
     if args.run:
         return _run_modal(args.run, extra)
 

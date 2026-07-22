@@ -89,3 +89,26 @@ def test_cli_errors_on_missing_named_side_csv(
         )
     assert exc.value.code != 0
     assert "side-effects CSV not found" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("stem", ["", "   "])
+def test_cli_errors_on_empty_stem(
+    stem: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An empty or whitespace-only --stem would write cryptic dotfiles
+    # (".md", ".html", ".png"); it must fail fast instead.
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "--dose-csv",
+                str(_DOSE),
+                "--layer-csv",
+                str(_LAYER),
+                "--out",
+                str(tmp_path / "o"),
+                "--stem",
+                stem,
+            ]
+        )
+    assert exc.value.code != 0
+    assert "output stem must not be empty" in capsys.readouterr().err
